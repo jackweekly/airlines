@@ -790,113 +790,104 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
 
   Widget _floatingPanel() {
     final isRoutes = _activePanel == 'routes';
-    final height = isRoutes ? 200.0 : 210.0;
-    final width = 360.0;
+    final height = MediaQuery.of(context).size.height * 0.6;
+    final width = 450.0;
     return Align(
       alignment: Alignment.bottomLeft,
       child: Material(
         color: Colors.black.withOpacity(0.85),
         borderRadius: BorderRadius.circular(14),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: height, maxWidth: width),
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
+        child: Container(
+          height: height,
+          width: width,
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        isRoutes ? 'Routes' : 'Fleet',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white70),
-                        onPressed: () => setState(() => _activePanel = ''),
-                      ),
-                    ],
+                  Text(
+                    isRoutes ? 'Routes' : 'My Fleet',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 20,
+                    ),
                   ),
-                  const SizedBox(height: 6),
-                  if (isRoutes) ...[
-                    _routeForm(),
-                    const SizedBox(height: 8),
-                    _ctaRow(),
-                    if (_error != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          _error!,
-                          style: const TextStyle(
-                            color: Colors.redAccent,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 8),
-                    _sectionTitle('Active routes'),
-                    SizedBox(
-                      height: 90,
-                      child: _routes.isEmpty
-                          ? const Center(
-                              child: Text(
-                                'No routes yet',
-                                style: TextStyle(color: Colors.white54),
-                              ),
-                            )
-                          : ListView.builder(
-                              itemCount: _routes.length,
-                              itemBuilder: (context, i) =>
-                                  _routeTile(_routes[i]),
-                            ),
-                    ),
-                  ] else ...[
-                    _sectionTitle('Fleet'),
-                    const SizedBox(height: 4),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _templates.isEmpty
-                            ? null
-                            : _openCatalogDialog,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.tealAccent,
-                          foregroundColor: Colors.black,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        icon: const Icon(Icons.add),
-                        label: const Text('Purchase aircraft'),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      height: 90,
-                      child: _fleet.isEmpty
-                          ? const Center(
-                              child: Text(
-                                'No aircraft',
-                                style: TextStyle(color: Colors.white54),
-                              ),
-                            )
-                          : ListView.builder(
-                              itemCount: _fleet.length,
-                              itemBuilder: (context, i) =>
-                                  _fleetTile(_fleet[i]),
-                            ),
-                    ),
-                  ],
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white70),
+                    onPressed: () => setState(() => _activePanel = ''),
+                  ),
                 ],
               ),
-            ),
+              const SizedBox(height: 6),
+              if (isRoutes) ...[
+                _routeForm(),
+                const SizedBox(height: 8),
+                _ctaRow(),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(
+                        color: Colors.redAccent,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                _sectionTitle('Active routes'),
+                const SizedBox(height: 4),
+                Expanded(
+                  child: _routes.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'No routes yet',
+                            style: TextStyle(color: Colors.white54),
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: _routes.length,
+                          itemBuilder: (context, i) => _routeTile(_routes[i]),
+                        ),
+                ),
+              ] else ...[
+                // _sectionTitle('Fleet') removed as it is redundant with header
+                const SizedBox(height: 4),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _templates.isEmpty ? null : _openCatalogDialog,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.tealAccent,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Purchase aircraft'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: _fleet.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'No aircraft',
+                            style: TextStyle(color: Colors.white54),
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: _fleet.length,
+                          itemBuilder: (context, i) => _fleetTile(_fleet[i]),
+                        ),
+                ),
+              ],
+            ],
           ),
         ),
       ),
@@ -1793,60 +1784,61 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     final displayPrice = r.userPrice > 0 ? r.userPrice : r.price;
     final loadForDisplay = r.lastLoad > 0 ? r.lastLoad : r.load;
     final revForDisplay = r.lastRev > 0 ? r.lastRev : r.rev;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(
-                  routeLabel,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: profitPos
-                      ? Colors.teal.withOpacity(0.2)
-                      : Colors.red.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  r.aircraftId,
-                  style: TextStyle(
-                    color: profitPos ? Colors.tealAccent : Colors.redAccent,
-                    fontSize: 11,
+    return Card(
+      elevation: 3,
+      margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+      color: Colors.white.withOpacity(0.04), // Keeping some transparency if desired, or use default Surface color
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    routeLabel,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Freq ${r.freq}/d • Block ${r.blockMins.toStringAsFixed(0)}m • Last Load ${(loadForDisplay * 100).clamp(0, 999).toStringAsFixed(0)}% • Fare \$${displayPrice.toStringAsFixed(0)} • Fees \$${r.landingFees.toStringAsFixed(0)}/leg',
-            style: const TextStyle(color: Colors.white70, fontSize: 11),
-          ),
-          Text(
-            'Last Rev \$${revForDisplay.toStringAsFixed(0)} • Cost \$${r.cost.toStringAsFixed(0)} • Profit \$${r.profit.toStringAsFixed(0)}${r.curfewBlocked ? ' • Curfew blocked' : ''}',
-            style: const TextStyle(color: Colors.white70, fontSize: 11),
-          ),
-        ],
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: profitPos
+                        ? Colors.teal.withOpacity(0.2)
+                        : Colors.red.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    r.aircraftId,
+                    style: TextStyle(
+                      color: profitPos ? Colors.tealAccent : Colors.redAccent,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Freq ${r.freq}/d • Block ${r.blockMins.toStringAsFixed(0)}m • Last Load ${(loadForDisplay * 100).clamp(0, 999).toStringAsFixed(0)}% • Fare \$${displayPrice.toStringAsFixed(0)} • Fees \$${r.landingFees.toStringAsFixed(0)}/leg',
+              style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Last Rev \$${revForDisplay.toStringAsFixed(0)} • Cost \$${r.cost.toStringAsFixed(0)} • Profit \$${r.profit.toStringAsFixed(0)}${r.curfewBlocked ? ' • Curfew blocked' : ''}',
+              style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1865,97 +1857,97 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
           (f.condition / 100).clamp(0.0, 1.0),
         ) ??
         Colors.tealAccent;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                f.name,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                ),
-              ),
-              Text(
-                status,
-                style: TextStyle(
-                  color: isMaintenance ? Colors.redAccent : Colors.white70,
-                  fontSize: 11,
-                  fontWeight: isMaintenance ? FontWeight.w600 : FontWeight.w400,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Stack(
-            children: [
-              Container(
-                height: 6,
-                decoration: BoxDecoration(
-                  color: Colors.white12,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-              ),
-              FractionallySizedBox(
-                widthFactor: (f.util / 100).clamp(0.0, 1.0),
-                child: Container(
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: Colors.tealAccent,
-                    borderRadius: BorderRadius.circular(6),
+    return Card(
+      elevation: 3,
+      margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+      color: Colors.white.withOpacity(0.04),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  f.name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Stack(
-            children: [
-              Container(
-                height: 6,
-                decoration: BoxDecoration(
-                  color: Colors.white12,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-              ),
-              FractionallySizedBox(
-                widthFactor: (f.condition / 100).clamp(0.0, 1.0),
-                child: Container(
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: conditionColor,
-                    borderRadius: BorderRadius.circular(6),
+                Text(
+                  status,
+                  style: TextStyle(
+                    color: isMaintenance ? Colors.redAccent : Colors.white70,
+                    fontSize: 11,
+                    fontWeight: isMaintenance ? FontWeight.w600 : FontWeight.w400,
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Util ${f.util.toStringAsFixed(0)}%',
-            style: const TextStyle(color: Colors.white70, fontSize: 11),
-          ),
-          Text(
-            'Condition ${f.condition.toStringAsFixed(0)}%',
-            style: const TextStyle(color: Colors.white70, fontSize: 11),
-          ),
-          if (f.ownershipType.toLowerCase() == 'leased')
-            Text(
-              'Lease ${_formatMillions(f.monthlyCost)}/tick',
-              style: const TextStyle(color: Colors.white70, fontSize: 11),
+              ],
             ),
-        ],
+            const SizedBox(height: 8),
+            Stack(
+              children: [
+                Container(
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: Colors.white12,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+                FractionallySizedBox(
+                  widthFactor: (f.util / 100).clamp(0.0, 1.0),
+                  child: Container(
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: Colors.tealAccent,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Stack(
+              children: [
+                Container(
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: Colors.white12,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+                FractionallySizedBox(
+                  widthFactor: (f.condition / 100).clamp(0.0, 1.0),
+                  child: Container(
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: conditionColor,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Util ${f.util.toStringAsFixed(0)}%',
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            Text(
+              'Condition ${f.condition.toStringAsFixed(0)}%',
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            if (f.ownershipType.toLowerCase() == 'leased')
+              Text(
+                'Lease ${_formatMillions(f.monthlyCost)}/tick',
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+          ],
+        ),
       ),
     );
   }

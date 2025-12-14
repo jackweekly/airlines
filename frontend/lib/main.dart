@@ -372,6 +372,15 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   int _simSpeed = 1;
   bool _pickingFrom = false;
   bool _pickingTo = false;
+  List<Airport> _airportList = const [];
+  void _notifySelection() {
+    final msg = {
+      'type': 'set_selection',
+      'from': _fromCtrl.text.trim(),
+      'to': _toCtrl.text.trim(),
+    };
+    _iframe.contentWindow?.postMessage(msg, '*');
+  }
 
   @override
   void initState() {
@@ -394,6 +403,8 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     // ignore: undefined_prefixed_name
     ui_web.platformViewRegistry.registerViewFactory(_viewId, (int _) => _iframe);
 
+    _loadAirportsList();
+
     html.window.onMessage.listen((event) {
       final data = event.data;
       if (data is Map && data['type'] == 'airport_select') {
@@ -404,11 +415,19 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
             _fromCtrl.text = ident;
             _pickingFrom = false;
           });
+          _notifySelection();
         } else if (_pickingTo) {
           setState(() {
             _toCtrl.text = ident;
             _pickingTo = false;
           });
+          _notifySelection();
+        } else {
+          // default to fill "from" if neither pick mode is active
+          setState(() {
+            _fromCtrl.text = ident;
+          });
+          _notifySelection();
         }
       }
     });
@@ -821,6 +840,24 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     }
   }
 
+  Future<void> _loadAirportsList() async {
+    try {
+      final resp = await http.get(Uri.parse('http://localhost:4000/airports?tier=medium&fields=basic'));
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body) as List<dynamic>;
+        final list = data
+            .map((e) => Airport.fromJson(e as Map<String, dynamic>))
+            .where((a) => a.ident.isNotEmpty)
+            .toList();
+        setState(() {
+          _airportList = list;
+        });
+      }
+    } catch (_) {
+      // ignore for now; fallback to manual entry
+    }
+  }
+
   Future<void> _buy(String templateId) async {
     setState(() {
       _busy = true;
@@ -1027,21 +1064,9 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       children: [
         Row(
           children: [
-            Expanded(
-              child: TextField(
-                controller: _fromCtrl,
-                decoration: _inputDecoration('From (IATA/ICAO)', 'e.g. IAD'),
-                style: const TextStyle(color: Colors.white),
-              ),
-            ),
+            Expanded(child: _airportAutocomplete(_fromCtrl, 'From (IATA/ICAO)', isFrom: true)),
             const SizedBox(width: 8),
-            Expanded(
-              child: TextField(
-                controller: _toCtrl,
-                decoration: _inputDecoration('To', 'e.g. LAX'),
-                style: const TextStyle(color: Colors.white),
-              ),
-            ),
+            Expanded(child: _airportAutocomplete(_toCtrl, 'To', isFrom: false)),
           ],
         ),
         const SizedBox(height: 8),
@@ -1065,7 +1090,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Freq/day', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  const Text('Round Trips/day', style: TextStyle(color: Colors.white70, fontSize: 12)),
                   Slider(
                     value: _freqPerDay.toDouble(),
                     min: 1,
@@ -1089,7 +1114,12 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                 _pickingFrom = true;
                 _pickingTo = false;
               }),
-              child: Text(_pickingFrom ? 'Picking From… (click map)' : 'Pick From'),
+              style: TextButton.styleFrom(
+                backgroundColor: _pickingFrom ? Colors.teal.withOpacity(0.2) : Colors.transparent,
+                side: BorderSide(color: _pickingFrom ? Colors.tealAccent : Colors.white24),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: Text(_pickingFrom ? 'Picking From… (click map)' : 'Pick From', style: const TextStyle(color: Colors.white)),
             ),
             const SizedBox(width: 6),
             TextButton(
@@ -1097,7 +1127,12 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                 _pickingTo = true;
                 _pickingFrom = false;
               }),
-              child: Text(_pickingTo ? 'Picking To… (click map)' : 'Pick To'),
+              style: TextButton.styleFrom(
+                backgroundColor: _pickingTo ? Colors.teal.withOpacity(0.2) : Colors.transparent,
+                side: BorderSide(color: _pickingTo ? Colors.tealAccent : Colors.white24),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: Text(_pickingTo ? 'Picking To… (click map)' : 'Pick To', style: const TextStyle(color: Colors.white)),
             ),
             const Spacer(),
             IconButton(
@@ -1108,6 +1143,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                   _fromCtrl.text = _toCtrl.text;
                   _toCtrl.text = tmp;
                 });
+                _notifySelection();
               },
             ),
           ],
@@ -1156,6 +1192,71 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
         borderSide: const BorderSide(color: Colors.tealAccent),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    );
+  }
+
+  Widget _airportAutocomplete(TextEditingController controller, String label, {required bool isFrom}) {
+    return Autocomplete<Airport>(
+      optionsBuilder: (text) {
+        final q = text.text.toLowerCase();
+        if (q.isEmpty) return const Iterable<Airport>.empty();
+        return _airportList.where((a) {
+          return a.ident.toLowerCase().contains(q) ||
+              a.name.toLowerCase().contains(q) ||
+              a.city.toLowerCase().contains(q);
+        });
+      },
+      displayStringForOption: (a) => '${a.ident} - ${a.name}${a.city.isNotEmpty ? ' (${a.city})' : ''}',
+      fieldViewBuilder: (context, textCtrl, focusNode, onFieldSubmitted) {
+        textCtrl.text = controller.text;
+        textCtrl.selection = TextSelection.collapsed(offset: textCtrl.text.length);
+        return TextField(
+          controller: textCtrl,
+          focusNode: focusNode,
+          decoration: _inputDecoration(label, 'Search by code, name, city'),
+          style: const TextStyle(color: Colors.white),
+          onChanged: (val) {
+            controller.text = val;
+            _notifySelection();
+          },
+        );
+      },
+      onSelected: (a) {
+        setState(() {
+          controller.text = a.ident;
+          if (isFrom) {
+            _pickingFrom = false;
+          } else {
+            _pickingTo = false;
+          }
+        });
+        _notifySelection();
+      },
+      optionsViewBuilder: (context, onSelected, options) {
+        return Align(
+          alignment: Alignment.topLeft,
+          child: Material(
+            color: Colors.black87,
+            borderRadius: BorderRadius.circular(8),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220, maxWidth: 320),
+              child: ListView.builder(
+                padding: EdgeInsets.zero,
+                itemCount: options.length,
+                itemBuilder: (context, i) {
+                  final a = options.elementAt(i);
+                  return ListTile(
+                    dense: true,
+                    title: Text('${a.ident} - ${a.name}', style: const TextStyle(color: Colors.white)),
+                    subtitle: Text(a.city, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                    onTap: () => onSelected(a),
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 

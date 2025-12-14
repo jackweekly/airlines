@@ -49,6 +49,7 @@
       let routeArcs = {};
       let planeStates = [];
       let lastFrame = null;
+      const selectedSourceId = 'selected-airports';
       if (!token) {
         document.getElementById('map').innerHTML = '<p style="color:red">Missing Mapbox token</p>';
         return;
@@ -359,6 +360,23 @@
               }
             });
 
+            map.addSource(selectedSourceId, {
+              type: 'geojson',
+              data: { type: 'FeatureCollection', features: [] }
+            });
+            map.addLayer({
+              id: 'selected-airports-layer',
+              type: 'circle',
+              source: selectedSourceId,
+              paint: {
+                'circle-color': ['match', ['get', 'role'], 'from', '#22c55e', 'to', '#ef4444', '#38bdf8'],
+                'circle-radius': 10,
+                'circle-stroke-width': 3,
+                'circle-stroke-color': '#0f172a',
+                'circle-opacity': 0.9
+              }
+            });
+
             const routePopup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false });
             map.on('mouseenter', 'routes-line', () => {
               map.getCanvas().style.cursor = 'pointer';
@@ -521,6 +539,36 @@
         }
         requestAnimationFrame(animatePlanes);
       }
+
+      window.addEventListener('message', (event) => {
+        const data = event.data;
+        if (!data || typeof data !== 'object') return;
+        if (data.type === 'set_selection') {
+          const from = (data.from || '').toUpperCase();
+          const to = (data.to || '').toUpperCase();
+          const features = [];
+          if (from && airportsByIdent[from]) {
+            const a = airportsByIdent[from];
+            features.push({
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: [a.lon, a.lat] },
+              properties: { role: 'from' }
+            });
+          }
+          if (to && airportsByIdent[to]) {
+            const a = airportsByIdent[to];
+            features.push({
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: [a.lon, a.lat] },
+              properties: { role: 'to' }
+            });
+          }
+          const sel = map.getSource(selectedSourceId);
+          if (sel) {
+            sel.setData({ type: 'FeatureCollection', features });
+          }
+        }
+      });
     })();
   </script>
 </body>

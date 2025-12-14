@@ -55,6 +55,7 @@ type Route struct {
 	ID                string  `json:"id"`
 	From              string  `json:"from"`
 	To                string  `json:"to"`
+	Via               string  `json:"via,omitempty"`
 	AircraftID        string  `json:"aircraft_id"`
 	FrequencyPerDay   int     `json:"frequency_per_day"`
 	EstimatedDemand   int     `json:"estimated_demand"`
@@ -217,6 +218,7 @@ func main() {
 		var req struct {
 			From       string `json:"from"`
 			To         string `json:"to"`
+			Via        string `json:"via,omitempty"`
 			AircraftID string `json:"aircraft_id"`
 			Frequency  int    `json:"frequency_per_day"`
 			OneWay     bool   `json:"one_way"`
@@ -227,7 +229,7 @@ func main() {
 		}
 		stateMu.Lock()
 		defer stateMu.Unlock()
-		route, err := buildRoute(req.From, req.To, req.AircraftID, req.Frequency)
+		route, err := buildRoute(req.From, req.To, req.Via, req.AircraftID, req.Frequency)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -545,18 +547,33 @@ func filterAirports(all []Airport, tier string) []Airport {
 	return out
 }
 
-func buildRoute(from, to, aircraftID string, freq int) (Route, error) {
+func buildRoute(from, to, via, aircraftID string, freq int) (Route, error) {
 	if freq <= 0 {
 		freq = 1
 	}
-	fromAp, ok := airportsByIdent[strings.ToUpper(from)]
+	fromID := strings.ToUpper(strings.TrimSpace(from))
+	toID := strings.ToUpper(strings.TrimSpace(to))
+	viaID := strings.ToUpper(strings.TrimSpace(via))
+
+	fromAp, ok := airportsByIdent[fromID]
 	if !ok {
 		return Route{}, http.ErrMissingFile
 	}
-	toAp, ok := airportsByIdent[strings.ToUpper(to)]
+	toAp, ok := airportsByIdent[toID]
 	if !ok {
 		return Route{}, http.ErrMissingFile
 	}
+	var viaAp Airport
+	var hasVia bool
+	if viaID != "" {
+		v, ok := airportsByIdent[viaID]
+		if !ok {
+			return Route{}, http.ErrMissingFile
+		}
+		viaAp = v
+		hasVia = true
+	}
+
 	ac, err := findAircraft(aircraftID)
 	if err != nil {
 		return Route{}, err
@@ -566,69 +583,162 @@ func buildRoute(from, to, aircraftID string, freq int) (Route, error) {
 		reqRunway = 1500
 	}
 
-	dist := haversine(fromAp.Latitude, fromAp.Longitude, toAp.Latitude, toAp.Longitude)
-	if dist > ac.RangeKm {
+	distMain := haversine(fromAp.Latitude, fromAp.Longitude, toAp.Latitude, toAp.Longitude)
+	if distMain > ac.RangeKm {
 		return Route{}, http.ErrBodyNotAllowed
 	}
-	if fromAp.RunwayM < reqRunway {
-		return Route{}, fmt.Errorf("%s runway too short for %s", fromAp.Ident, ac.ID)
-	}
-	if toAp.RunwayM < reqRunway {
-		return Route{}, fmt.Errorf("%s runway too short for %s", toAp.Ident, ac.ID)
-	}
-	// Demand model: base demand scales with distance and airport size proxy,
-	// adjusted by price and frequency (more frequency = slightly higher demand capture).
-	baseDemand := 60 + int(dist/45)
-	if baseDemand < 35 {
-		baseDemand = 35
-	}
-	if baseDemand > ac.Seats*3 {
-		baseDemand = ac.Seats * 3
+	if fromAp.RunwayM < reqRunway || toAp.RunwayM < reqRunway {
+		return Route{}, fmt.Errorf("runway too short for %s", ac.ID)
 	}
 
-	// Price: a rough cents-per-km, scaled for distance.
-	price := 0.13 * dist
-
-	// Price elasticity: higher price shrinks demand.
-	priceElasticity := math.Exp(-price / 8000.0)
-	// Frequency effect: more flights capture a bit more demand.
-	freqBoost := 1.0 + (float64(freq-1) * 0.08)
-
-	estimatedDemand := int(float64(baseDemand) * priceElasticity * freqBoost)
-	if estimatedDemand < 20 {
-		estimatedDemand = 20
+	var distVia1, distVia2 float64
+	if hasVia {
+		distVia1 = haversine(fromAp.Latitude, fromAp.Longitude, viaAp.Latitude, viaAp.Longitude)
+		distVia2 = haversine(viaAp.Latitude, viaAp.Longitude, toAp.Latitude, toAp.Longitude)
+		if distVia1 > ac.RangeKm || distVia2 > ac.RangeKm {
+			return Route{}, http.ErrBodyNotAllowed
+		}
+		if viaAp.RunwayM < reqRunway {
+			return Route{}, fmt.Errorf("%s runway too short for %s", viaAp.Ident, ac.ID)
+		}
 	}
 
-	seatsAvailablePerLeg := ac.Seats
-	seatsSoldPerLeg := min(estimatedDemand, seatsAvailablePerLeg)
-	loadFactor := float64(seatsSoldPerLeg) / float64(seatsAvailablePerLeg)
+	type leg struct {
+		dist     float64
+		demand   int
+		sold     int
+		price    float64
+		revenue  float64
+		cost     float64
+		blockMin float64
+		fees     float64
+	}
 
-	revenuePerLeg := float64(seatsSoldPerLeg) * price
-	// Costs: fuel + simple per-leg ops fee
-	landingFees := fromAp.LandingFee + toAp.LandingFee
-	costPerLeg := dist*ac.FuelCost + 800.0 + landingFees
-	legsPerTick := float64(freq)
-	profitPerTick := (revenuePerLeg - costPerLeg) * legsPerTick
-	blockMinutes := blockTimeMinutes(dist, ac.CruiseKmh, ac.TurnaroundMin)
+	demandLeg := func(a, b Airport) int {
+		return demandEstimate(a, b, ac, freq)
+	}
+	legCost := func(a, b Airport, dist float64) (float64, float64) {
+		fees := a.LandingFee + b.LandingFee
+		return dist*ac.FuelCost + 800.0 + fees, fees
+	}
+	legBlock := func(dist float64) float64 {
+		return (dist/ac.CruiseKmh)*60 + float64(ac.TurnaroundMin)
+	}
+
+	var legs []leg
+
+	if hasVia {
+		// Outbound: from->via with local + through demand, then via->to
+		d1 := demandLeg(fromAp, viaAp) + demandLeg(fromAp, toAp)
+		d2 := demandLeg(viaAp, toAp)
+		// Inbound: to->via with local + through demand, then via->from
+		d3 := demandLeg(toAp, viaAp) + demandLeg(toAp, fromAp)
+		d4 := demandLeg(viaAp, fromAp)
+
+		for _, x := range []struct {
+			dist   float64
+			demand int
+			a      Airport
+			b      Airport
+		}{
+			{distVia1, d1, fromAp, viaAp},
+			{distVia2, d2, viaAp, toAp},
+			{distVia2, d3, toAp, viaAp},
+			{distVia1, d4, viaAp, fromAp},
+		} {
+			sold := min(x.demand, ac.Seats)
+			price := 0.13 * x.dist
+			rev := float64(sold) * price
+			cost, fees := legCost(x.a, x.b, x.dist)
+			legs = append(legs, leg{
+				dist:     x.dist,
+				demand:   x.demand,
+				sold:     sold,
+				price:    price,
+				revenue:  rev,
+				cost:     cost,
+				blockMin: legBlock(x.dist),
+				fees:     fees,
+			})
+		}
+	} else {
+		// Simple round trip
+		for _, x := range []struct {
+			dist   float64
+			demand int
+			a      Airport
+			b      Airport
+		}{
+			{distMain, demandLeg(fromAp, toAp), fromAp, toAp},
+			{distMain, demandLeg(toAp, fromAp), toAp, fromAp},
+		} {
+			sold := min(x.demand, ac.Seats)
+			price := 0.13 * x.dist
+			rev := float64(sold) * price
+			cost, fees := legCost(x.a, x.b, x.dist)
+			legs = append(legs, leg{
+				dist:     x.dist,
+				demand:   x.demand,
+				sold:     sold,
+				price:    price,
+				revenue:  rev,
+				cost:     cost,
+				blockMin: legBlock(x.dist),
+				fees:     fees,
+			})
+		}
+	}
+
+	totalRevenue := 0.0
+	totalCost := 0.0
+	totalSold := 0
+	totalDemand := 0
+	totalBlock := 0.0
+	totalFees := 0.0
+	for _, l := range legs {
+		totalRevenue += l.revenue
+		totalCost += l.cost
+		totalSold += l.sold
+		totalDemand += l.demand
+		totalBlock += l.blockMin
+		totalFees += l.fees
+	}
+
+	legsPerTrip := float64(len(legs))
+	avgRevenuePerLeg := totalRevenue / legsPerTrip
+	avgCostPerLeg := totalCost / legsPerTrip
+	avgFeesPerLeg := totalFees / legsPerTrip
+	loadFactor := float64(totalSold) / float64(ac.Seats*len(legs))
+
+	profitPerTick := (totalRevenue - totalCost) * float64(freq)
 	curfewBlocked := fromAp.Curfew || toAp.Curfew
+	if hasVia && viaAp.Curfew {
+		curfewBlocked = true
+	}
+
+	avgPricePerSeat := 0.0
+	if totalSold > 0 {
+		avgPricePerSeat = totalRevenue / float64(totalSold)
+	}
 
 	route := Route{
 		ID:                strconv.FormatInt(time.Now().UnixNano(), 10),
-		From:              strings.ToUpper(from),
-		To:                strings.ToUpper(to),
+		From:              fromID,
+		To:                toID,
+		Via:               viaID,
 		AircraftID:        ac.ID,
 		FrequencyPerDay:   freq,
-		EstimatedDemand:   estimatedDemand,
-		PricePerSeat:      price,
-		EstRevenueTick:    revenuePerLeg * legsPerTick,
-		EstCostTick:       costPerLeg * legsPerTick,
+		EstimatedDemand:   totalDemand,
+		PricePerSeat:      avgPricePerSeat,
+		EstRevenueTick:    totalRevenue * float64(freq),
+		EstCostTick:       totalCost * float64(freq),
 		LoadFactor:        loadFactor,
-		RevenuePerLeg:     revenuePerLeg,
-		CostPerLeg:        costPerLeg,
-		LandingFeesPerLeg: landingFees,
+		RevenuePerLeg:     avgRevenuePerLeg,
+		CostPerLeg:        avgCostPerLeg,
+		LandingFeesPerLeg: avgFeesPerLeg,
 		ProfitPerTick:     profitPerTick,
-		SeatsSoldPerLeg:   seatsSoldPerLeg,
-		BlockMinutes:      blockMinutes,
+		SeatsSoldPerLeg:   totalSold / len(legs),
+		BlockMinutes:      totalBlock,
 		CurfewBlocked:     curfewBlocked,
 	}
 	return route, nil
@@ -729,6 +839,25 @@ func marketExistsLocked(from, to string) bool {
 		}
 	}
 	return false
+}
+
+func demandEstimate(fromAp, toAp Airport, ac Aircraft, freq int) int {
+	dist := haversine(fromAp.Latitude, fromAp.Longitude, toAp.Latitude, toAp.Longitude)
+	base := 60 + int(dist/45)
+	if base < 35 {
+		base = 35
+	}
+	if base > ac.Seats*3 {
+		base = ac.Seats * 3
+	}
+	price := 0.13 * dist
+	priceElasticity := math.Exp(-price / 8000.0)
+	freqBoost := 1.0 + (float64(freq-1) * 0.08)
+	d := int(float64(base) * priceElasticity * freqBoost)
+	if d < 20 {
+		d = 20
+	}
+	return d
 }
 
 func findAircraft(id string) (Aircraft, error) {

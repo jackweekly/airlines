@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,6 +93,8 @@ type Route struct {
 	SeatsSoldPerLeg   int     `json:"seats_sold_per_leg"`
 	BlockMinutes      float64 `json:"block_minutes"`
 	CurfewBlocked     bool    `json:"curfew_blocked"`
+	LastTickRevenue   float64 `json:"last_tick_revenue"`
+	LastTickLoad      float64 `json:"last_tick_load"`
 }
 
 type GameState struct {
@@ -120,6 +124,7 @@ type OwnedCraft struct {
 	Status        string  `json:"status"` // active, delivering, maintenance
 	AvailableIn   int     `json:"available_in_ticks"`
 	Utilization   float64 `json:"utilization_pct"`
+	Condition     float64 `json:"condition_pct"`
 }
 
 // acquisition configuration
@@ -178,7 +183,10 @@ var (
 	simCtx    context.Context
 	simCancel context.CancelFunc
 	simTicker *time.Ticker
+	rng       = rand.New(rand.NewSource(time.Now().UnixNano()))
 )
+
+const saveFilePath = "data/savegame.json"
 
 func seedFleet() []OwnedCraft {
 	starterIDs := map[string]bool{
@@ -207,6 +215,7 @@ func seedFleet() []OwnedCraft {
 			Status:        "active",
 			AvailableIn:   0,
 			Utilization:   0,
+			Condition:     100,
 		})
 	}
 	return out
@@ -218,6 +227,13 @@ var (
 	stateMu         sync.Mutex
 	state           GameState
 	aircraftCatalog []Aircraft
+)
+
+const (
+	manualMaintenanceTicks = 3
+)
+
+var (
 	runwayReqMeters = map[string]int{
 		"ATR72":      1300,
 		"CRJ9":       1500,
@@ -263,11 +279,18 @@ func main() {
 		airportsByIdent[strings.ToUpper(a.Ident)] = a
 	}
 
-	state = GameState{
-		Cash:  500_000_000, // starting cash
-		Fleet: seedFleet(),
-		Speed: 1,
+	loadedState, err := loadState(saveFilePath)
+	if err == nil && (len(loadedState.Fleet) > 0 || len(loadedState.Routes) > 0) {
+		state = loadedState
+		log.Printf("loaded savegame with %d routes and %d aircraft", len(state.Routes), len(state.Fleet))
+	} else {
+		state = GameState{
+			Cash:  500_000_000, // starting cash
+			Fleet: seedFleet(),
+			Speed: 1,
+		}
 	}
+	recalcUtilizationLocked()
 
 	r := chi.NewRouter()
 	r.Use(corsMiddleware)
@@ -459,10 +482,53 @@ func main() {
 			Status:        "delivering",
 			AvailableIn:   lead,
 			Utilization:   0,
+			Condition:     100,
 		}
 		state.Fleet = append(state.Fleet, newCraft)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(newCraft)
+	})
+
+	r.Post("/fleet/maintenance", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			OwnedID string `json:"owned_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OwnedID == "" {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		stateMu.Lock()
+		defer stateMu.Unlock()
+		var craft *OwnedCraft
+		for i := range state.Fleet {
+			if strings.EqualFold(state.Fleet[i].ID, req.OwnedID) {
+				craft = &state.Fleet[i]
+				break
+			}
+		}
+		if craft == nil {
+			http.Error(w, "unknown aircraft", http.StatusNotFound)
+			return
+		}
+		if craft.Status == "delivering" {
+			http.Error(w, "aircraft still delivering", http.StatusBadRequest)
+			return
+		}
+		if state.Cash <= 0 {
+			http.Error(w, "insufficient cash", http.StatusBadRequest)
+			return
+		}
+		cost := maintenanceCost(craft.Condition)
+		if state.Cash < cost {
+			http.Error(w, "insufficient cash", http.StatusBadRequest)
+			return
+		}
+		state.Cash -= cost
+		craft.Condition = 100
+		beginMaintenanceLocked(craft, manualMaintenanceTicks)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(craft)
 	})
 
 	addr := ":" + getPort()
@@ -501,6 +567,33 @@ func loadAircraftDatabase(path string) ([]Aircraft, error) {
 		return nil, err
 	}
 	return aircraft, nil
+}
+
+func loadState(path string) (GameState, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return GameState{}, err
+	}
+	var st GameState
+	if err := json.Unmarshal(data, &st); err != nil {
+		return GameState{}, err
+	}
+	return st, nil
+}
+
+func saveState(path string, st *GameState) error {
+	data, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func loadAirports(path string) (*AirportStore, error) {
@@ -731,9 +824,20 @@ func buildRoute(from, to, via, aircraftID string, freq int) (Route, error) {
 		fees     float64
 	}
 
-	demandLeg := func(a, b Airport) int {
-		return demandEstimate(a, b, ac, freq)
+	demandLeg := func(a, b Airport, opts demandOptions) int {
+		return demandEstimateWithOpts(a, b, ac, freq, opts)
 	}
+	stopoverPriceFactor := 1.0
+	if hasVia {
+		totalViaDist := distVia1 + distVia2
+		if totalViaDist > 0 && distMain > 0 {
+			stopoverPriceFactor = distMain / totalViaDist
+			if stopoverPriceFactor > 1 {
+				stopoverPriceFactor = 1
+			}
+		}
+	}
+
 	legCost := func(a, b Airport, dist float64) (float64, float64) {
 		fees := a.LandingFee + b.LandingFee
 		return dist*ac.FuelCost + 800.0 + fees, fees
@@ -746,11 +850,12 @@ func buildRoute(from, to, via, aircraftID string, freq int) (Route, error) {
 
 	if hasVia {
 		// Outbound: from->via with local + through demand, then via->to
-		d1 := demandLeg(fromAp, viaAp) + demandLeg(fromAp, toAp)
-		d2 := demandLeg(viaAp, toAp)
+		stopOpts := demandOptions{Stopover: true, PriceFactor: stopoverPriceFactor}
+		d1 := demandLeg(fromAp, viaAp, demandOptions{}) + demandLeg(fromAp, toAp, stopOpts)
+		d2 := demandLeg(viaAp, toAp, demandOptions{})
 		// Inbound: to->via with local + through demand, then via->from
-		d3 := demandLeg(toAp, viaAp) + demandLeg(toAp, fromAp)
-		d4 := demandLeg(viaAp, fromAp)
+		d3 := demandLeg(toAp, viaAp, demandOptions{}) + demandLeg(toAp, fromAp, stopOpts)
+		d4 := demandLeg(viaAp, fromAp, demandOptions{})
 
 		for _, x := range []struct {
 			dist   float64
@@ -786,8 +891,8 @@ func buildRoute(from, to, via, aircraftID string, freq int) (Route, error) {
 			a      Airport
 			b      Airport
 		}{
-			{distMain, demandLeg(fromAp, toAp), fromAp, toAp},
-			{distMain, demandLeg(toAp, fromAp), toAp, fromAp},
+			{distMain, demandLeg(fromAp, toAp, demandOptions{}), fromAp, toAp},
+			{distMain, demandLeg(toAp, fromAp, demandOptions{}), toAp, fromAp},
 		} {
 			sold := min(x.demand, ac.Seats)
 			price := 0.13 * x.dist
@@ -857,6 +962,8 @@ func buildRoute(from, to, via, aircraftID string, freq int) (Route, error) {
 		SeatsSoldPerLeg:   totalSold / len(legs),
 		BlockMinutes:      totalBlock,
 		CurfewBlocked:     curfewBlocked,
+		LastTickRevenue:   totalRevenue * float64(freq),
+		LastTickLoad:      loadFactor,
 	}
 	return route, nil
 }
@@ -876,6 +983,13 @@ func toRad(deg float64) float64 {
 
 func min(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b
@@ -912,13 +1026,22 @@ func validateCapacityLocked(route Route) error {
 		return fmt.Errorf("insufficient aircraft time (over 16h/day for %s fleet)", route.AircraftID)
 	}
 
+	addSlotUse := func(ident string, freq int, slotUse map[string]int) {
+		if ident == "" || freq == 0 {
+			return
+		}
+		slotUse[strings.ToUpper(ident)] += freq
+	}
+
 	// slot constraints per airport
 	slotUse := make(map[string]int)
-	slotUse[strings.ToUpper(route.From)] += route.FrequencyPerDay
-	slotUse[strings.ToUpper(route.To)] += route.FrequencyPerDay
+	addSlotUse(route.From, route.FrequencyPerDay, slotUse)
+	addSlotUse(route.To, route.FrequencyPerDay, slotUse)
+	addSlotUse(route.Via, route.FrequencyPerDay, slotUse)
 	for _, rt := range state.Routes {
-		slotUse[strings.ToUpper(rt.From)] += rt.FrequencyPerDay
-		slotUse[strings.ToUpper(rt.To)] += rt.FrequencyPerDay
+		addSlotUse(rt.From, rt.FrequencyPerDay, slotUse)
+		addSlotUse(rt.To, rt.FrequencyPerDay, slotUse)
+		addSlotUse(rt.Via, rt.FrequencyPerDay, slotUse)
 	}
 	for ident, used := range slotUse {
 		if ap, ok := airportsByIdent[ident]; ok && ap.SlotsPerDay > 0 && used > ap.SlotsPerDay {
@@ -928,12 +1051,20 @@ func validateCapacityLocked(route Route) error {
 
 	// curfew: ensure total block minutes at airport fits within allowed hours
 	blockUse := make(map[string]float64)
+	addBlockUse := func(ident string, mins float64, freq int, blockUse map[string]float64) {
+		if ident == "" || freq == 0 || mins <= 0 {
+			return
+		}
+		blockUse[strings.ToUpper(ident)] += mins * float64(freq)
+	}
 	// include new route usage
-	blockUse[strings.ToUpper(route.From)] += route.BlockMinutes * float64(route.FrequencyPerDay)
-	blockUse[strings.ToUpper(route.To)] += route.BlockMinutes * float64(route.FrequencyPerDay)
+	addBlockUse(route.From, route.BlockMinutes, route.FrequencyPerDay, blockUse)
+	addBlockUse(route.To, route.BlockMinutes, route.FrequencyPerDay, blockUse)
+	addBlockUse(route.Via, route.BlockMinutes, route.FrequencyPerDay, blockUse)
 	for _, rt := range state.Routes {
-		blockUse[strings.ToUpper(rt.From)] += rt.BlockMinutes * float64(rt.FrequencyPerDay)
-		blockUse[strings.ToUpper(rt.To)] += rt.BlockMinutes * float64(rt.FrequencyPerDay)
+		addBlockUse(rt.From, rt.BlockMinutes, rt.FrequencyPerDay, blockUse)
+		addBlockUse(rt.To, rt.BlockMinutes, rt.FrequencyPerDay, blockUse)
+		addBlockUse(rt.Via, rt.BlockMinutes, rt.FrequencyPerDay, blockUse)
 	}
 	for ident, mins := range blockUse {
 		ap, ok := airportsByIdent[ident]
@@ -959,6 +1090,15 @@ func marketExistsLocked(from, to string) bool {
 }
 
 func demandEstimate(fromAp, toAp Airport, ac Aircraft, freq int) int {
+	return demandEstimateWithOpts(fromAp, toAp, ac, freq, demandOptions{})
+}
+
+type demandOptions struct {
+	Stopover    bool
+	PriceFactor float64
+}
+
+func demandEstimateWithOpts(fromAp, toAp Airport, ac Aircraft, freq int, opts demandOptions) int {
 	dist := haversine(fromAp.Latitude, fromAp.Longitude, toAp.Latitude, toAp.Longitude)
 	base := 60 + int(dist/45)
 	if base < 35 {
@@ -967,10 +1107,21 @@ func demandEstimate(fromAp, toAp Airport, ac Aircraft, freq int) int {
 	if base > ac.Seats*3 {
 		base = ac.Seats * 3
 	}
-	price := 0.13 * dist
+	priceFactor := 1.0
+	if opts.PriceFactor > 0 {
+		priceFactor = opts.PriceFactor
+	}
+	price := 0.13 * dist * priceFactor
 	priceElasticity := math.Exp(-price / 8000.0)
 	freqBoost := 1.0 + (float64(freq-1) * 0.08)
 	d := int(float64(base) * priceElasticity * freqBoost)
+	if opts.Stopover {
+		penalty := 0.8
+		if priceFactor <= 0.85 {
+			penalty = 1.0
+		}
+		d = int(float64(d) * penalty)
+	}
 	if d < 20 {
 		d = 20
 	}
@@ -992,6 +1143,69 @@ func blockTimeMinutes(distanceKm, cruiseKmh float64, turnaroundMin int) float64 
 	}
 	flightHours := distanceKm / cruiseKmh
 	return (flightHours * 60.0 * 2) + float64(turnaroundMin) // out and back plus turnaround
+}
+
+func maintenanceCost(condition float64) float64 {
+	deficit := 100 - condition
+	if deficit < 5 {
+		deficit = 5
+	}
+	return deficit * 75_000
+}
+
+func maxTemplateUtilization(templateID string) float64 {
+	maxUtil := 0.0
+	for _, ac := range state.Fleet {
+		if ac.TemplateID == templateID && ac.Status == "active" {
+			if ac.Utilization > maxUtil {
+				maxUtil = ac.Utilization
+			}
+		}
+	}
+	return maxUtil
+}
+
+func advanceFleetTimersLocked() {
+	for i := range state.Fleet {
+		ac := &state.Fleet[i]
+		if ac.AvailableIn > 0 {
+			ac.AvailableIn--
+			if ac.AvailableIn <= 0 {
+				ac.AvailableIn = 0
+				if ac.Status == "delivering" || ac.Status == "maintenance" {
+					ac.Status = "active"
+				}
+			}
+		}
+	}
+}
+
+func applyMaintenanceWearLocked() {
+	for i := range state.Fleet {
+		ac := &state.Fleet[i]
+		if ac.Status != "active" || ac.Condition <= 0 {
+			continue
+		}
+		wear := 0.05 + (ac.Utilization/100.0)*0.4
+		ac.Condition -= wear
+		if ac.Condition < 0 {
+			ac.Condition = 0
+		}
+		if ac.Condition < 50 {
+			chance := ((50 - ac.Condition) / 50.0) * 0.25
+			if chance > 0 && rng.Float64() < chance {
+				beginMaintenanceLocked(ac, 3+rng.Intn(3))
+			}
+		}
+	}
+}
+
+func beginMaintenanceLocked(ac *OwnedCraft, ticks int) {
+	if ticks < 1 {
+		ticks = 1
+	}
+	ac.Status = "maintenance"
+	ac.AvailableIn = ticks
 }
 
 // recalcUtilizationLocked recomputes utilization for each owned aircraft based on assigned routes.
@@ -1022,26 +1236,58 @@ func recalcUtilizationLocked() {
 			}
 		}
 		ac.Utilization = util
-		if ac.AvailableIn > 0 {
-			ac.AvailableIn--
-			if ac.AvailableIn == 0 {
-				ac.Status = "active"
-			}
-		}
 	}
 }
 
 func advanceTickLocked() {
-	revenue := 0.0
-	cost := 0.0
-	for _, rt := range state.Routes {
-		revenue += rt.EstRevenueTick
-		cost += rt.EstCostTick
+	totalRevenue := 0.0
+	totalCost := 0.0
+	for i := range state.Routes {
+		rt := &state.Routes[i]
+		ac, err := findAircraft(rt.AircraftID)
+		if err != nil {
+			continue
+		}
+		routeCost := rt.EstCostTick
+		totalCost += routeCost
+
+		randomFactor := 0.85 + rng.Float64()*0.3
+		capacity := float64(ac.Seats * maxInt(1, rt.FrequencyPerDay))
+		if capacity <= 0 {
+			capacity = float64(ac.Seats)
+		}
+		demand := float64(rt.EstimatedDemand) * randomFactor
+		actualSold := math.Min(capacity, demand)
+		actualRevenue := 0.0
+		actualLoad := 0.0
+		if capacity > 0 {
+			actualLoad = actualSold / capacity
+		}
+
+		if maxTemplateUtilization(rt.AircraftID) > 100 && rng.Float64() < 0.2 {
+			actualRevenue = 0
+			actualLoad = 0
+		} else {
+			actualRevenue = actualSold * rt.PricePerSeat
+		}
+
+		rt.LastTickRevenue = actualRevenue
+		rt.LastTickLoad = actualLoad
+		rt.LoadFactor = actualLoad
+		rt.EstRevenueTick = actualRevenue
+		rt.ProfitPerTick = actualRevenue - routeCost
+
+		totalRevenue += actualRevenue
 	}
-	state.Cash += revenue - cost
+	state.Cash += totalRevenue - totalCost
+	advanceFleetTimersLocked()
+	applyMaintenanceWearLocked()
 	state.Tick++
 	if state.Tick%6 == 0 { // periodically decay utilization so it re-calculates with routes
 		recalcUtilizationLocked()
+	}
+	if err := saveState(saveFilePath, &state); err != nil {
+		log.Printf("failed to save state: %v", err)
 	}
 }
 

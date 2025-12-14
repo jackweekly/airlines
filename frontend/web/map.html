@@ -50,6 +50,7 @@
       let planeStates = [];
       let lastFrame = null;
       const selectedSourceId = 'selected-airports';
+      const selectedRouteSourceId = 'selected-route';
       if (!token) {
         document.getElementById('map').innerHTML = '<p style="color:red">Missing Mapbox token</p>';
         return;
@@ -369,11 +370,34 @@
               type: 'circle',
               source: selectedSourceId,
               paint: {
-                'circle-color': ['match', ['get', 'role'], 'from', '#22c55e', 'to', '#ef4444', '#38bdf8'],
+                'circle-color': [
+                  'match',
+                  ['get', 'role'],
+                  'from', '#22c55e',
+                  'via', '#facc15',
+                  'to', '#ef4444',
+                  '#38bdf8'
+                ],
                 'circle-radius': 10,
                 'circle-stroke-width': 3,
                 'circle-stroke-color': '#0f172a',
                 'circle-opacity': 0.9
+              }
+            });
+
+            map.addSource(selectedRouteSourceId, {
+              type: 'geojson',
+              data: { type: 'FeatureCollection', features: [] }
+            });
+            map.addLayer({
+              id: 'selected-route-layer',
+              type: 'line',
+              source: selectedRouteSourceId,
+              paint: {
+                'line-color': '#fde047',
+                'line-width': 2,
+                'line-dasharray': [1.2, 1.2],
+                'line-opacity': 0.9
               }
             });
 
@@ -389,9 +413,10 @@
               if (!e.features || !e.features.length) return;
               const f = e.features[0];
               const p = f.properties || {};
+              const label = p.route_label || `${p.from || ''} → ${p.to || ''}`;
               const html = `
                 <div style="font-family: sans-serif; min-width: 200px;">
-                  <div style="font-weight:700; margin-bottom:4px;">${p.from} → ${p.to}</div>
+                  <div style="font-weight:700; margin-bottom:4px;">${label}</div>
                   <div style="font-size:12px; color:#0f172a;">Freq ${p.freq}/day • Block ${p.block_mins}m</div>
                   <div style="font-size:12px; color:#0f172a;">Load ${p.load}% • Fees $${p.fees}/leg</div>
                   <div style="font-size:12px; color:#0f172a;">Rev $${p.rev} Cost $${p.cost} Profit $${p.profit}</div>
@@ -408,47 +433,78 @@
                   const slotUse = {};
                   routeArcs = {};
                   planeStates = [];
+                  const features = [];
                   routes.forEach(r => {
                     const fromId = (r.from || '').toUpperCase();
                     const toId = (r.to || '').toUpperCase();
+                    const viaId = (r.via || '').toUpperCase();
                     const freq = r.frequency_per_day || 0;
-                    slotUse[fromId] = (slotUse[fromId] || 0) + freq;
-                    slotUse[toId] = (slotUse[toId] || 0) + freq;
-                  });
-                  const features = routes.map(r => {
-                    const from = airportsByIdent[(r.from || '').toUpperCase()];
-                    const to = airportsByIdent[(r.to || '').toUpperCase()];
-                    if (!from || !to) return null;
-                    const arc = greatCircle([from.lon, from.lat], [to.lon, to.lat], 64);
-                    const rid = r.id || `${r.from}-${r.to}`;
-                    routeArcs[rid] = arc;
-                    planeStates.push({
-                      id: rid,
-                      arc,
-                      progress: Math.random(),
-                      speed: Math.max(0.0005, Math.min(0.005, (r.block_minutes ? 1 / (r.block_minutes * 1200) : 0.001)))
-                    });
-                    return {
-                      type: 'Feature',
-                      geometry: {
-                        type: 'LineString',
-                        coordinates: arc
-                      },
-                      properties: {
-                        id: r.id || `${r.from}-${r.to}`,
-                        from: r.from || '',
-                        to: r.to || '',
-                        aircraft: r.aircraft_id || '',
-                        freq: r.frequency_per_day || 0,
-                        profit: Math.round(r.profit_per_tick || 0),
-                        cost: Math.round(r.estimated_cost_tick || 0),
-                        rev: Math.round(r.estimated_revenue_tick || 0),
-                        load: Math.round((r.load_factor || 0) * 100),
-                        fees: Math.round(r.landing_fees_per_leg || 0),
-                        block_mins: Math.round(r.block_minutes || 0)
-                      }
+                    if (fromId) slotUse[fromId] = (slotUse[fromId] || 0) + freq;
+                    if (toId) slotUse[toId] = (slotUse[toId] || 0) + freq;
+                    if (viaId) slotUse[viaId] = (slotUse[viaId] || 0) + freq;
+
+                    const from = airportsByIdent[fromId];
+                    const to = airportsByIdent[toId];
+                    if (!from || !to) return;
+                    const via = viaId ? airportsByIdent[viaId] : null;
+                    const rid = r.id || `${fromId}-${toId}`;
+                    const routeLabel = via && viaId
+                      ? `${fromId} → ${toId} (via ${viaId})`
+                      : `${fromId} → ${toId}`;
+                    const commonProps = {
+                      route_id: rid,
+                      route_label: routeLabel,
+                      via: viaId || '',
+                      aircraft: r.aircraft_id || '',
+                      freq,
+                      profit: Math.round(r.profit_per_tick || 0),
+                      cost: Math.round(r.estimated_cost_tick || 0),
+                      rev: Math.round(r.estimated_revenue_tick || 0),
+                      load: Math.round((r.load_factor || 0) * 100),
+                      fees: Math.round(r.landing_fees_per_leg || 0),
+                      block_mins: Math.round(r.block_minutes || 0)
                     };
-                  }).filter(Boolean);
+                    let combinedArc = [];
+                    const addLeg = (start, end, legFrom, legTo, legIndex) => {
+                      if (!start || !end) return;
+                      const arc = greatCircle([start.lon, start.lat], [end.lon, end.lat], 64);
+                      if (!arc || !arc.length) return;
+                      if (!combinedArc.length) {
+                        combinedArc = arc.slice();
+                      } else {
+                        combinedArc = combinedArc.concat(arc.slice(1));
+                      }
+                      features.push({
+                        type: 'Feature',
+                        geometry: {
+                          type: 'LineString',
+                          coordinates: arc
+                        },
+                        properties: {
+                          ...commonProps,
+                          id: `${rid}-${legIndex}`,
+                          from: legFrom,
+                          to: legTo,
+                          leg_index: legIndex
+                        }
+                      });
+                    };
+                    if (via) {
+                      addLeg(from, via, fromId, viaId, 0);
+                      addLeg(via, to, viaId, toId, 1);
+                    } else {
+                      addLeg(from, to, fromId, toId, 0);
+                    }
+                    if (combinedArc.length >= 2) {
+                      routeArcs[rid] = combinedArc;
+                      planeStates.push({
+                        id: rid,
+                        arc: combinedArc,
+                        progress: Math.random(),
+                        speed: Math.max(0.0005, Math.min(0.005, (r.block_minutes ? 1 / (r.block_minutes * 1200) : 0.001)))
+                      });
+                    }
+                  });
                   const routesSource = map.getSource('routes');
                   if (routesSource) {
                     routesSource.setData({ type: 'FeatureCollection', features });
@@ -545,6 +601,7 @@
         if (!data || typeof data !== 'object') return;
         if (data.type === 'set_selection') {
           const from = (data.from || '').toUpperCase();
+          const via = (data.via || '').toUpperCase();
           const to = (data.to || '').toUpperCase();
           const features = [];
           if (from && airportsByIdent[from]) {
@@ -553,6 +610,14 @@
               type: 'Feature',
               geometry: { type: 'Point', coordinates: [a.lon, a.lat] },
               properties: { role: 'from' }
+            });
+          }
+          if (via && airportsByIdent[via]) {
+            const a = airportsByIdent[via];
+            features.push({
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: [a.lon, a.lat] },
+              properties: { role: 'via' }
             });
           }
           if (to && airportsByIdent[to]) {
@@ -566,6 +631,32 @@
           const sel = map.getSource(selectedSourceId);
           if (sel) {
             sel.setData({ type: 'FeatureCollection', features });
+          }
+
+          const lineFeatures = [];
+          const addLineSegment = (startId, endId) => {
+            if (!startId || !endId) return;
+            const start = airportsByIdent[startId];
+            const end = airportsByIdent[endId];
+            if (!start || !end) return;
+            const arc = greatCircle([start.lon, start.lat], [end.lon, end.lat], 64);
+            lineFeatures.push({
+              type: 'Feature',
+              geometry: { type: 'LineString', coordinates: arc },
+              properties: {}
+            });
+          };
+          if (from && to) {
+            if (via && airportsByIdent[via]) {
+              addLineSegment(from, via);
+              addLineSegment(via, to);
+            } else {
+              addLineSegment(from, to);
+            }
+          }
+          const selRoute = map.getSource(selectedRouteSourceId);
+          if (selRoute) {
+            selRoute.setData({ type: 'FeatureCollection', features: lineFeatures });
           }
         }
       });

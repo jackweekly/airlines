@@ -161,7 +161,10 @@ class _GlobeScreenState extends State<GlobeScreen> {
                     child: ColoredBox(
                       color: Colors.black54,
                       child: Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
                         child: Text(
                           'Loading airports…',
                           style: TextStyle(color: Colors.white),
@@ -176,7 +179,10 @@ class _GlobeScreenState extends State<GlobeScreen> {
                     child: ColoredBox(
                       color: Colors.redAccent.withOpacity(0.9),
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
                         child: Text(
                           _airportsError!,
                           style: const TextStyle(color: Colors.white),
@@ -237,7 +243,14 @@ class _GlobeScreenState extends State<GlobeScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Settings', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+                    const Text(
+                      'Settings',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     IconButton(
                       onPressed: () => setState(() => _showSettings = false),
                       icon: const Icon(Icons.close, color: Colors.white),
@@ -245,7 +258,10 @@ class _GlobeScreenState extends State<GlobeScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                const Text('Theme / Style', style: TextStyle(color: Colors.white70)),
+                const Text(
+                  'Theme / Style',
+                  style: TextStyle(color: Colors.white70),
+                ),
                 DropdownButtonHideUnderline(
                   child: DropdownButton<String>(
                     dropdownColor: Colors.black87,
@@ -254,7 +270,10 @@ class _GlobeScreenState extends State<GlobeScreen> {
                         .map(
                           (name) => DropdownMenuItem(
                             value: name,
-                            child: Text(name, style: const TextStyle(color: Colors.white)),
+                            child: Text(
+                              name,
+                              style: const TextStyle(color: Colors.white),
+                            ),
                           ),
                         )
                         .toList(),
@@ -321,7 +340,8 @@ class _GlobeScreenState extends State<GlobeScreen> {
     Iterable<Airport> filtered = _airports;
     if (_currentZoom < 5) {
       filtered = filtered.where(
-          (a) => a.type == 'large_airport' || a.type == 'medium_airport');
+        (a) => a.type == 'large_airport' || a.type == 'medium_airport',
+      );
     } else if (_currentZoom < 7) {
       filtered = filtered.where((a) => a.type != 'small_airport');
     }
@@ -348,6 +368,8 @@ class MapboxGlobeWeb extends StatefulWidget {
   State<MapboxGlobeWeb> createState() => _MapboxGlobeWebState();
 }
 
+enum RouteFieldRole { from, via, to }
+
 class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   late final String _viewId;
   bool _mapReady = false;
@@ -359,6 +381,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   List<RouteInfo> _routes = const [];
   List<OwnedCraft> _fleet = const [];
   final TextEditingController _fromCtrl = TextEditingController();
+  final TextEditingController _viaCtrl = TextEditingController();
   final TextEditingController _toCtrl = TextEditingController();
   String _aircraftId = 'A320';
   int _freqPerDay = 1;
@@ -409,6 +432,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   bool _running = false;
   int _simSpeed = 1;
   bool _pickingFrom = false;
+  bool _pickingVia = false;
   bool _pickingTo = false;
   List<Airport> _airportList = const [];
   List<AircraftTemplate> _templates = const [];
@@ -418,6 +442,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     final msg = {
       'type': 'set_selection',
       'from': _fromCtrl.text.trim(),
+      'via': _viaCtrl.text.trim(),
       'to': _toCtrl.text.trim(),
     };
     _iframe.contentWindow?.postMessage(msg, '*');
@@ -442,7 +467,10 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       }
     });
     // ignore: undefined_prefixed_name
-    ui_web.platformViewRegistry.registerViewFactory(_viewId, (int _) => _iframe);
+    ui_web.platformViewRegistry.registerViewFactory(
+      _viewId,
+      (int _) => _iframe,
+    );
 
     _loadAirportsList();
     _loadAircraftTemplates();
@@ -456,6 +484,12 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
           setState(() {
             _fromCtrl.text = ident;
             _pickingFrom = false;
+          });
+          _notifySelection();
+        } else if (_pickingVia) {
+          setState(() {
+            _viaCtrl.text = ident;
+            _pickingVia = false;
           });
           _notifySelection();
         } else if (_pickingTo) {
@@ -502,7 +536,10 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                   child: ColoredBox(
                     color: Colors.black54,
                     child: Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                       child: Text(
                         'Loading globe…',
                         style: TextStyle(color: Colors.white),
@@ -579,37 +616,52 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Settings', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+                      const Text(
+                        'Settings',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                       IconButton(
                         onPressed: () => setState(() => _showSettings = false),
                         icon: const Icon(Icons.close, color: Colors.white),
                       ),
                     ],
                   ),
-                const SizedBox(height: 8),
-                const Text('Theme / Style', style: TextStyle(color: Colors.white70)),
-                const SizedBox(height: 8),
-                ..._mapboxStyles.entries.map((entry) {
-                  final isSelected = entry.value == _currentStyle;
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    leading: Icon(
-                      isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                      color: Colors.white,
-                    ),
-                    title: Text(entry.key, style: const TextStyle(color: Colors.white)),
-                    onTap: () {
-                      setState(() {
-                        _currentStyle = entry.value;
-                        _mapReady = false;
-                      });
-                      Future.microtask(() {
-                        _iframe.src = _srcForStyle(entry.value);
-                      });
-                    },
-                  );
-                }),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Theme / Style',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                  const SizedBox(height: 8),
+                  ..._mapboxStyles.entries.map((entry) {
+                    final isSelected = entry.value == _currentStyle;
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      leading: Icon(
+                        isSelected
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_unchecked,
+                        color: Colors.white,
+                      ),
+                      title: Text(
+                        entry.key,
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                      onTap: () {
+                        setState(() {
+                          _currentStyle = entry.value;
+                          _mapReady = false;
+                        });
+                        Future.microtask(() {
+                          _iframe.src = _srcForStyle(entry.value);
+                        });
+                      },
+                    );
+                  }),
                 ],
               ),
             ),
@@ -621,7 +673,10 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
 
   String _styleNameFor(String styleId) {
     return _mapboxStyles.entries
-        .firstWhere((e) => e.value == styleId, orElse: () => _mapboxStyles.entries.first)
+        .firstWhere(
+          (e) => e.value == styleId,
+          orElse: () => _mapboxStyles.entries.first,
+        )
         .key;
   }
 
@@ -644,7 +699,13 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Row(
           children: [
-            const Text('Airline Builder', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+            const Text(
+              'Airline Builder',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
             const SizedBox(width: 12),
             _kpiRow(),
             const Spacer(),
@@ -655,8 +716,13 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               style: OutlinedButton.styleFrom(
                 side: const BorderSide(color: Colors.white24),
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
               ),
               child: const Text('Advance tick'),
             ),
@@ -697,7 +763,9 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                       alignment: Alignment.centerRight,
                       child: Text(
                         _templatesError ??
-                            (_loadingTemplates ? 'Loading aircraft…' : 'No aircraft available'),
+                            (_loadingTemplates
+                                ? 'Loading aircraft…'
+                                : 'No aircraft available'),
                         style: const TextStyle(color: Colors.white70),
                       ),
                     )
@@ -723,9 +791,13 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: active ? Colors.teal.withOpacity(0.2) : Colors.white.withOpacity(0.06),
+          color: active
+              ? Colors.teal.withOpacity(0.2)
+              : Colors.white.withOpacity(0.06),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: active ? Colors.tealAccent : Colors.white24),
+          border: Border.all(
+            color: active ? Colors.tealAccent : Colors.white24,
+          ),
         ),
         child: Row(
           children: [
@@ -749,7 +821,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
         borderRadius: BorderRadius.circular(14),
         child: ConstrainedBox(
           constraints: BoxConstraints(maxHeight: height, maxWidth: width),
-        child: Padding(
+          child: Padding(
             padding: const EdgeInsets.all(10),
             child: SingleChildScrollView(
               child: Column(
@@ -761,7 +833,11 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                     children: [
                       Text(
                         isRoutes ? 'Routes' : 'Fleet',
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
                       ),
                       IconButton(
                         icon: const Icon(Icons.close, color: Colors.white70),
@@ -777,17 +853,29 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                     if (_error != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
-                        child: Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                        child: Text(
+                          _error!,
+                          style: const TextStyle(
+                            color: Colors.redAccent,
+                            fontSize: 12,
+                          ),
+                        ),
                       ),
                     const SizedBox(height: 8),
                     _sectionTitle('Active routes'),
                     SizedBox(
                       height: 90,
                       child: _routes.isEmpty
-                          ? const Center(child: Text('No routes yet', style: TextStyle(color: Colors.white54)))
+                          ? const Center(
+                              child: Text(
+                                'No routes yet',
+                                style: TextStyle(color: Colors.white54),
+                              ),
+                            )
                           : ListView.builder(
                               itemCount: _routes.length,
-                              itemBuilder: (context, i) => _routeTile(_routes[i]),
+                              itemBuilder: (context, i) =>
+                                  _routeTile(_routes[i]),
                             ),
                     ),
                   ] else ...[
@@ -795,10 +883,16 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                     SizedBox(
                       height: 90,
                       child: _fleet.isEmpty
-                          ? const Center(child: Text('No aircraft', style: TextStyle(color: Colors.white54)))
+                          ? const Center(
+                              child: Text(
+                                'No aircraft',
+                                style: TextStyle(color: Colors.white54),
+                              ),
+                            )
                           : ListView.builder(
                               itemCount: _fleet.length,
-                              itemBuilder: (context, i) => _fleetTile(_fleet[i]),
+                              itemBuilder: (context, i) =>
+                                  _fleetTile(_fleet[i]),
                             ),
                     ),
                   ],
@@ -826,9 +920,13 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
           _running = data['is_running'] ?? false;
           _simSpeed = data['speed'] ?? 1;
           final routes = (data['routes'] as List<dynamic>? ?? []);
-          _routes = routes.map((e) => RouteInfo.fromJson(e as Map<String, dynamic>)).toList();
+          _routes = routes
+              .map((e) => RouteInfo.fromJson(e as Map<String, dynamic>))
+              .toList();
           final fleet = (data['fleet'] as List<dynamic>? ?? []);
-          _fleet = fleet.map((e) => OwnedCraft.fromJson(e as Map<String, dynamic>)).toList();
+          _fleet = fleet
+              .map((e) => OwnedCraft.fromJson(e as Map<String, dynamic>))
+              .toList();
         });
       } else {
         setState(() {
@@ -859,6 +957,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       final body = json.encode({
         'from': _fromCtrl.text.trim(),
         'to': _toCtrl.text.trim(),
+        'via': _viaCtrl.text.trim(),
         'aircraft_id': _aircraftId,
         'frequency_per_day': _freqPerDay,
         'one_way': _oneWay,
@@ -906,7 +1005,9 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
 
   Future<void> _loadAirportsList() async {
     try {
-      final resp = await http.get(Uri.parse('http://localhost:4000/airports?tier=medium&fields=basic'));
+      final resp = await http.get(
+        Uri.parse('http://localhost:4000/airports?tier=medium&fields=basic'),
+      );
       if (resp.statusCode == 200) {
         final data = json.decode(resp.body) as List<dynamic>;
         final list = data
@@ -928,10 +1029,14 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       _templatesError = null;
     });
     try {
-      final resp = await http.get(Uri.parse('http://localhost:4000/aircraft/templates'));
+      final resp = await http.get(
+        Uri.parse('http://localhost:4000/aircraft/templates'),
+      );
       if (resp.statusCode == 200) {
         final data = json.decode(resp.body) as List<dynamic>;
-        final list = data.map((e) => AircraftTemplate.fromJson(e as Map<String, dynamic>)).toList();
+        final list = data
+            .map((e) => AircraftTemplate.fromJson(e as Map<String, dynamic>))
+            .toList();
         setState(() {
           _templates = list;
           if (list.isNotEmpty && !list.any((t) => t.id == _aircraftId)) {
@@ -939,7 +1044,10 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
           }
         });
       } else {
-        setState(() => _templatesError = 'Failed to load aircraft (${resp.statusCode})');
+        setState(
+          () =>
+              _templatesError = 'Failed to load aircraft (${resp.statusCode})',
+        );
       }
     } catch (e) {
       setState(() => _templatesError = 'Failed to load aircraft: $e');
@@ -1005,7 +1113,9 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       _error = null;
     });
     try {
-      final resp = await http.post(Uri.parse('http://localhost:4000/sim/pause'));
+      final resp = await http.post(
+        Uri.parse('http://localhost:4000/sim/pause'),
+      );
       if (resp.statusCode == 200) {
         await _loadState();
       } else {
@@ -1040,6 +1150,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       if (mounted) setState(() => _busy = false);
     }
   }
+
   Widget _buyButton(AircraftTemplate template) {
     final id = template.id;
     final price = _prices[id];
@@ -1065,7 +1176,14 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: const [
-            Text('Routes', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
+            Text(
+              'Routes',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 16,
+              ),
+            ),
           ],
         ),
         IconButton(
@@ -1092,10 +1210,10 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       scrollDirection: Axis.horizontal,
       child: Row(
         children: cards
-            .map((c) => Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: c,
-                ))
+            .map(
+              (c) =>
+                  Padding(padding: const EdgeInsets.only(right: 6), child: c),
+            )
             .toList(),
       ),
     );
@@ -1112,8 +1230,22 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label.toUpperCase(), style: const TextStyle(color: Colors.white54, fontSize: 10, letterSpacing: 0.5)),
-          Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+          Text(
+            label.toUpperCase(),
+            style: const TextStyle(
+              color: Colors.white54,
+              fontSize: 10,
+              letterSpacing: 0.5,
+            ),
+          ),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+          ),
         ],
       ),
     );
@@ -1123,8 +1255,13 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     return Row(
       children: [
         IconButton(
-          icon: Icon(_running ? Icons.pause_circle_filled : Icons.play_circle_fill, color: Colors.white),
-          onPressed: _busy ? null : () => _running ? _pauseSim() : _startSim(_simSpeed),
+          icon: Icon(
+            _running ? Icons.pause_circle_filled : Icons.play_circle_fill,
+            color: Colors.white,
+          ),
+          onPressed: _busy
+              ? null
+              : () => _running ? _pauseSim() : _startSim(_simSpeed),
         ),
         Row(
           children: List.generate(4, (i) {
@@ -1135,13 +1272,27 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               child: GestureDetector(
                 onTap: _busy ? null : () => _setSimSpeed(sp),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: active ? Colors.teal.withOpacity(0.2) : Colors.white.withOpacity(0.06),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: active ? Colors.tealAccent : Colors.white24),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
                   ),
-                  child: Text('${sp}x', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: active ? FontWeight.w700 : FontWeight.w500)),
+                  decoration: BoxDecoration(
+                    color: active
+                        ? Colors.teal.withOpacity(0.2)
+                        : Colors.white.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: active ? Colors.tealAccent : Colors.white24,
+                    ),
+                  ),
+                  child: Text(
+                    '${sp}x',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                    ),
+                  ),
                 ),
               ),
             );
@@ -1157,9 +1308,25 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       children: [
         Row(
           children: [
-            Expanded(child: _airportAutocomplete(_fromCtrl, 'From (IATA/ICAO)', isFrom: true)),
+            Expanded(
+              child: _airportAutocomplete(
+                _fromCtrl,
+                'From (IATA/ICAO)',
+                RouteFieldRole.from,
+              ),
+            ),
             const SizedBox(width: 8),
-            Expanded(child: _airportAutocomplete(_toCtrl, 'To', isFrom: false)),
+            Expanded(
+              child: _airportAutocomplete(
+                _viaCtrl,
+                'Via / Stopover (optional)',
+                RouteFieldRole.via,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _airportAutocomplete(_toCtrl, 'To', RouteFieldRole.to),
+            ),
           ],
         ),
         const SizedBox(height: 8),
@@ -1183,7 +1350,10 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                       ),
                     )
                     .toList(),
-                hint: const Text('Select aircraft', style: TextStyle(color: Colors.white)),
+                hint: const Text(
+                  'Select aircraft',
+                  style: TextStyle(color: Colors.white),
+                ),
                 onChanged: _templates.isEmpty
                     ? null
                     : (v) {
@@ -1197,7 +1367,10 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Round Trips/day', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  const Text(
+                    'Round Trips/day',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
                   Slider(
                     value: _freqPerDay.toDouble(),
                     min: 1,
@@ -1219,27 +1392,70 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
             TextButton(
               onPressed: () => setState(() {
                 _pickingFrom = true;
+                _pickingVia = false;
                 _pickingTo = false;
               }),
               style: TextButton.styleFrom(
-                backgroundColor: _pickingFrom ? Colors.teal.withOpacity(0.2) : Colors.transparent,
-                side: BorderSide(color: _pickingFrom ? Colors.tealAccent : Colors.white24),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                backgroundColor: _pickingFrom
+                    ? Colors.teal.withOpacity(0.2)
+                    : Colors.transparent,
+                side: BorderSide(
+                  color: _pickingFrom ? Colors.tealAccent : Colors.white24,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
               ),
-              child: Text(_pickingFrom ? 'Picking From… (click map)' : 'Pick From', style: const TextStyle(color: Colors.white)),
+              child: Text(
+                _pickingFrom ? 'Picking From… (click map)' : 'Pick From',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+            const SizedBox(width: 6),
+            TextButton(
+              onPressed: () => setState(() {
+                _pickingVia = true;
+                _pickingFrom = false;
+                _pickingTo = false;
+              }),
+              style: TextButton.styleFrom(
+                backgroundColor: _pickingVia
+                    ? Colors.teal.withOpacity(0.2)
+                    : Colors.transparent,
+                side: BorderSide(
+                  color: _pickingVia ? Colors.tealAccent : Colors.white24,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: Text(
+                _pickingVia ? 'Picking Via… (click map)' : 'Pick Via',
+                style: const TextStyle(color: Colors.white),
+              ),
             ),
             const SizedBox(width: 6),
             TextButton(
               onPressed: () => setState(() {
                 _pickingTo = true;
                 _pickingFrom = false;
+                _pickingVia = false;
               }),
               style: TextButton.styleFrom(
-                backgroundColor: _pickingTo ? Colors.teal.withOpacity(0.2) : Colors.transparent,
-                side: BorderSide(color: _pickingTo ? Colors.tealAccent : Colors.white24),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                backgroundColor: _pickingTo
+                    ? Colors.teal.withOpacity(0.2)
+                    : Colors.transparent,
+                side: BorderSide(
+                  color: _pickingTo ? Colors.tealAccent : Colors.white24,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
               ),
-              child: Text(_pickingTo ? 'Picking To… (click map)' : 'Pick To', style: const TextStyle(color: Colors.white)),
+              child: Text(
+                _pickingTo ? 'Picking To… (click map)' : 'Pick To',
+                style: const TextStyle(color: Colors.white),
+              ),
             ),
             const Spacer(),
             IconButton(
@@ -1261,14 +1477,21 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
-              color: _oneWay ? Colors.teal.withOpacity(0.2) : Colors.white.withOpacity(0.06),
+              color: _oneWay
+                  ? Colors.teal.withOpacity(0.2)
+                  : Colors.white.withOpacity(0.06),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: _oneWay ? Colors.tealAccent : Colors.white24),
+              border: Border.all(
+                color: _oneWay ? Colors.tealAccent : Colors.white24,
+              ),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('One-way only', style: TextStyle(color: Colors.white70)),
+                const Text(
+                  'One-way only',
+                  style: TextStyle(color: Colors.white70),
+                ),
                 Switch(
                   value: _oneWay,
                   onChanged: (v) => setState(() => _oneWay = v),
@@ -1302,7 +1525,11 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     );
   }
 
-  Widget _airportAutocomplete(TextEditingController controller, String label, {required bool isFrom}) {
+  Widget _airportAutocomplete(
+    TextEditingController controller,
+    String label,
+    RouteFieldRole role,
+  ) {
     return Autocomplete<Airport>(
       optionsBuilder: (text) {
         final q = text.text.toLowerCase();
@@ -1313,10 +1540,13 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               a.city.toLowerCase().contains(q);
         });
       },
-      displayStringForOption: (a) => '${a.ident} - ${a.name}${a.city.isNotEmpty ? ' (${a.city})' : ''}',
+      displayStringForOption: (a) =>
+          '${a.ident} - ${a.name}${a.city.isNotEmpty ? ' (${a.city})' : ''}',
       fieldViewBuilder: (context, textCtrl, focusNode, onFieldSubmitted) {
         textCtrl.text = controller.text;
-        textCtrl.selection = TextSelection.collapsed(offset: textCtrl.text.length);
+        textCtrl.selection = TextSelection.collapsed(
+          offset: textCtrl.text.length,
+        );
         return TextField(
           controller: textCtrl,
           focusNode: focusNode,
@@ -1331,10 +1561,16 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       onSelected: (a) {
         setState(() {
           controller.text = a.ident;
-          if (isFrom) {
-            _pickingFrom = false;
-          } else {
-            _pickingTo = false;
+          switch (role) {
+            case RouteFieldRole.from:
+              _pickingFrom = false;
+              break;
+            case RouteFieldRole.via:
+              _pickingVia = false;
+              break;
+            case RouteFieldRole.to:
+              _pickingTo = false;
+              break;
           }
         });
         _notifySelection();
@@ -1354,8 +1590,17 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                   final a = options.elementAt(i);
                   return ListTile(
                     dense: true,
-                    title: Text('${a.ident} - ${a.name}', style: const TextStyle(color: Colors.white)),
-                    subtitle: Text(a.city, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                    title: Text(
+                      '${a.ident} - ${a.name}',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    subtitle: Text(
+                      a.city,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                      ),
+                    ),
                     onTap: () => onSelected(a),
                   );
                 },
@@ -1377,10 +1622,16 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               backgroundColor: Colors.tealAccent,
               foregroundColor: Colors.black87,
               padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
             child: _busy
-                ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                ? const SizedBox(
+                    height: 16,
+                    width: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 : const Text('Create route'),
           ),
         ),
@@ -1392,7 +1643,9 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               side: const BorderSide(color: Colors.white24),
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
             child: const Text('Advance tick'),
           ),
@@ -1404,12 +1657,20 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   Widget _sectionTitle(String title) {
     return Text(
       title,
-      style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
+      style: const TextStyle(
+        color: Colors.white70,
+        fontWeight: FontWeight.w700,
+      ),
     );
   }
 
   Widget _routeTile(RouteInfo r) {
     final profitPos = r.profit >= 0;
+    final routeLabel = r.via.isNotEmpty
+        ? '${r.from} → ${r.to} (via ${r.via})'
+        : '${r.from} → ${r.to}';
+    final loadForDisplay = r.lastLoad > 0 ? r.lastLoad : r.load;
+    final revForDisplay = r.lastRev > 0 ? r.lastRev : r.rev;
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -1424,27 +1685,43 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('${r.from} → ${r.to}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+              Expanded(
+                child: Text(
+                  routeLabel,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 6),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: profitPos ? Colors.teal.withOpacity(0.2) : Colors.red.withOpacity(0.2),
+                  color: profitPos
+                      ? Colors.teal.withOpacity(0.2)
+                      : Colors.red.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   r.aircraftId,
-                  style: TextStyle(color: profitPos ? Colors.tealAccent : Colors.redAccent, fontSize: 11),
+                  style: TextStyle(
+                    color: profitPos ? Colors.tealAccent : Colors.redAccent,
+                    fontSize: 11,
+                  ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 4),
           Text(
-            'Freq ${r.freq}/d • Block ${r.blockMins.toStringAsFixed(0)}m • Load ${(r.load * 100).toStringAsFixed(0)}% • Fees \$${r.landingFees.toStringAsFixed(0)}/leg',
+            'Freq ${r.freq}/d • Block ${r.blockMins.toStringAsFixed(0)}m • Last Load ${(loadForDisplay * 100).clamp(0, 999).toStringAsFixed(0)}% • Fees \$${r.landingFees.toStringAsFixed(0)}/leg',
             style: const TextStyle(color: Colors.white70, fontSize: 11),
           ),
           Text(
-            'Rev \$${r.rev.toStringAsFixed(0)} • Cost \$${r.cost.toStringAsFixed(0)} • Profit \$${r.profit.toStringAsFixed(0)}${r.curfewBlocked ? ' • Curfew blocked' : ''}',
+            'Last Rev \$${revForDisplay.toStringAsFixed(0)} • Cost \$${r.cost.toStringAsFixed(0)} • Profit \$${r.profit.toStringAsFixed(0)}${r.curfewBlocked ? ' • Curfew blocked' : ''}',
             style: const TextStyle(color: Colors.white70, fontSize: 11),
           ),
         ],
@@ -1456,8 +1733,16 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     final status = f.status == 'active'
         ? 'Active'
         : f.status == 'delivering'
-            ? 'Delivers in ${f.availableIn} ticks'
-            : f.status;
+        ? 'Delivers in ${f.availableIn} ticks'
+        : f.status;
+    final isMaintenance = f.status.toLowerCase() == 'maintenance';
+    final conditionColor =
+        Color.lerp(
+          Colors.redAccent,
+          Colors.tealAccent,
+          (f.condition / 100).clamp(0.0, 1.0),
+        ) ??
+        Colors.tealAccent;
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -1472,8 +1757,22 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(f.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
-              Text(status, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+              Text(
+                f.name,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+              Text(
+                status,
+                style: TextStyle(
+                  color: isMaintenance ? Colors.redAccent : Colors.white70,
+                  fontSize: 11,
+                  fontWeight: isMaintenance ? FontWeight.w600 : FontWeight.w400,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 4),
@@ -1499,7 +1798,36 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
             ],
           ),
           const SizedBox(height: 4),
-          Text('Util ${f.util.toStringAsFixed(0)}%', style: const TextStyle(color: Colors.white70, fontSize: 11)),
+          Stack(
+            children: [
+              Container(
+                height: 6,
+                decoration: BoxDecoration(
+                  color: Colors.white12,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+              FractionallySizedBox(
+                widthFactor: (f.condition / 100).clamp(0.0, 1.0),
+                child: Container(
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: conditionColor,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Util ${f.util.toStringAsFixed(0)}%',
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+          Text(
+            'Condition ${f.condition.toStringAsFixed(0)}%',
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
         ],
       ),
     );
@@ -1511,12 +1839,15 @@ class RouteInfo {
     required this.id,
     required this.from,
     required this.to,
+    required this.via,
     required this.aircraftId,
     required this.freq,
     required this.price,
     required this.rev,
     required this.cost,
     required this.load,
+    required this.lastRev,
+    required this.lastLoad,
     required this.profit,
     required this.blockMins,
     required this.landingFees,
@@ -1526,12 +1857,15 @@ class RouteInfo {
   final String id;
   final String from;
   final String to;
+  final String via;
   final String aircraftId;
   final int freq;
   final double price;
   final double rev;
   final double cost;
   final double load;
+  final double lastRev;
+  final double lastLoad;
   final double profit;
   final double blockMins;
   final double landingFees;
@@ -1542,12 +1876,15 @@ class RouteInfo {
       id: json['id'] ?? '',
       from: json['from'] ?? '',
       to: json['to'] ?? '',
+      via: json['via']?.toString() ?? '',
       aircraftId: json['aircraft_id'] ?? '',
       freq: json['frequency_per_day'] ?? 0,
       price: (json['price_per_seat'] ?? 0).toDouble(),
       rev: (json['estimated_revenue_tick'] ?? 0).toDouble(),
       cost: (json['estimated_cost_tick'] ?? 0).toDouble(),
       load: (json['load_factor'] ?? 0).toDouble(),
+      lastRev: (json['last_tick_revenue'] ?? 0).toDouble(),
+      lastLoad: (json['last_tick_load'] ?? 0).toDouble(),
       profit: (json['profit_per_tick'] ?? 0).toDouble(),
       blockMins: (json['block_minutes'] ?? 0).toDouble(),
       landingFees: (json['landing_fees_per_leg'] ?? 0).toDouble(),
@@ -1569,6 +1906,7 @@ class OwnedCraft {
     required this.status,
     required this.availableIn,
     required this.util,
+    required this.condition,
   });
 
   final String id;
@@ -1582,6 +1920,7 @@ class OwnedCraft {
   final String status;
   final int availableIn;
   final double util;
+  final double condition;
 
   factory OwnedCraft.fromJson(Map<String, dynamic> json) {
     return OwnedCraft(
@@ -1596,6 +1935,7 @@ class OwnedCraft {
       status: json['status']?.toString() ?? '',
       availableIn: json['available_in_ticks'] ?? 0,
       util: (json['utilization_pct'] ?? 0).toDouble(),
+      condition: (json['condition_pct'] ?? 0).toDouble(),
     );
   }
 }

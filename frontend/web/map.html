@@ -46,6 +46,9 @@
       const backend = params.get('backend') || `${location.protocol}//${location.hostname}:4000`;
       const airportsByIdent = {};
       let airportsGeojson = null;
+      let routeArcs = {};
+      let planeStates = [];
+      let lastFrame = null;
       if (!token) {
         document.getElementById('map').innerHTML = '<p style="color:red">Missing Mapbox token</p>';
         return;
@@ -330,6 +333,24 @@
               }
             });
 
+            map.addSource('planes', {
+              type: 'geojson',
+              data: { type: 'FeatureCollection', features: [] }
+            });
+            map.addLayer({
+              id: 'planes-layer',
+              type: 'symbol',
+              source: 'planes',
+              layout: {
+                'icon-image': 'airport-15',
+                'icon-size': 1.2,
+                'icon-allow-overlap': true
+              },
+              paint: {
+                'icon-color': '#fef3c7'
+              }
+            });
+
             const routePopup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false });
             map.on('mouseenter', 'routes-line', () => {
               map.getCanvas().style.cursor = 'pointer';
@@ -359,6 +380,8 @@
                 .then(state => {
                   const routes = state.routes || [];
                   const slotUse = {};
+                  routeArcs = {};
+                  planeStates = [];
                   routes.forEach(r => {
                     const fromId = (r.from || '').toUpperCase();
                     const toId = (r.to || '').toUpperCase();
@@ -371,6 +394,14 @@
                     const to = airportsByIdent[(r.to || '').toUpperCase()];
                     if (!from || !to) return null;
                     const arc = greatCircle([from.lon, from.lat], [to.lon, to.lat], 64);
+                    const rid = r.id || `${r.from}-${r.to}`;
+                    routeArcs[rid] = arc;
+                    planeStates.push({
+                      id: rid,
+                      arc,
+                      progress: Math.random(),
+                      speed: Math.max(0.0005, Math.min(0.005, (r.block_minutes ? 1 / (r.block_minutes * 1200) : 0.001)))
+                    });
                     return {
                       type: 'Feature',
                       geometry: {
@@ -416,6 +447,7 @@
             // Initial render + periodic refresh so the map follows UI changes
             refreshRoutes();
             setInterval(refreshRoutes, 4000);
+            animatePlanes();
           })
           .catch(err => {
             console.error('Failed to load airports', err);
@@ -445,6 +477,42 @@
 
       function toRad(deg) { return deg * Math.PI / 180; }
       function toDeg(rad) { return rad * 180 / Math.PI; }
+
+      function interpolatePoint(coords, t) {
+        if (!coords || coords.length < 2) return null;
+        const total = coords.length - 1;
+        const exact = t * total;
+        const idx = Math.floor(exact);
+        const frac = exact - idx;
+        const a = coords[Math.min(idx, coords.length - 2)];
+        const b = coords[Math.min(idx + 1, coords.length - 1)];
+        const lon = a[0] + (b[0] - a[0]) * frac;
+        const lat = a[1] + (b[1] - a[1]) * frac;
+        return [lon, lat];
+      }
+
+      function animatePlanes(ts) {
+        if (!lastFrame) lastFrame = ts;
+        const dt = ts - lastFrame;
+        lastFrame = ts;
+        if (planeStates.length > 0) {
+          const planeFeatures = planeStates.map(p => {
+            p.progress = (p.progress + p.speed * dt) % 1;
+            const pt = interpolatePoint(p.arc, p.progress);
+            if (!pt) return null;
+            return {
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: pt },
+              properties: { id: p.id }
+            };
+          }).filter(Boolean);
+          const planeSource = map.getSource('planes');
+          if (planeSource) {
+            planeSource.setData({ type: 'FeatureCollection', features: planeFeatures });
+          }
+        }
+        requestAnimationFrame(animatePlanes);
+      }
     })();
   </script>
 </body>

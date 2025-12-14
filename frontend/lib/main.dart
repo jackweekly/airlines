@@ -367,6 +367,9 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   final Map<String, double> _prices = const {'A320': 98_000_000, 'B738': 96_000_000, 'E190': 52_000_000};
   final Map<String, int> _lead = const {'A320': 8, 'B738': 8, 'E190': 6};
   bool _oneWay = false;
+  String _activePanel = ''; // '', 'routes', 'fleet'
+  bool _running = false;
+  int _simSpeed = 1;
 
   @override
   void initState() {
@@ -450,12 +453,24 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               ),
               if (_showSettings) _buildSettingsPanel(),
               Positioned(
-                left: 16,
-                bottom: 16,
-                child: PointerInterceptor(
-                  child: _buildRoutePanel(),
-                ),
+                top: 12,
+                left: 12,
+                right: 12,
+                child: PointerInterceptor(child: _topBar()),
               ),
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 12,
+                child: PointerInterceptor(child: _bottomBar()),
+              ),
+              if (_activePanel.isNotEmpty)
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  bottom: 76,
+                  child: PointerInterceptor(child: _floatingPanel()),
+                ),
             ],
           ),
         ),
@@ -539,182 +554,153 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     _iframe.src = _srcForStyle(_currentStyle);
   }
 
-  Widget _buildRoutePanel() {
+  Widget _topBar() {
     return Material(
-      elevation: 4,
-      color: Colors.black.withOpacity(0.85),
+      color: Colors.black.withOpacity(0.75),
       borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(
+          children: [
+            const Text('Airline Builder', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+            const SizedBox(width: 12),
+            _kpiRow(),
+            const Spacer(),
+            _simControls(),
+            const SizedBox(width: 8),
+            OutlinedButton(
+              onPressed: _busy ? null : _tickOnce,
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.white24),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text('Advance tick'),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              icon: const Icon(Icons.refresh, color: Colors.white70),
+              onPressed: _busy ? null : _loadState,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _bottomBar() {
+    return Material(
+      color: Colors.black.withOpacity(0.75),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            _bottomChip('Routes', Icons.route, 'routes'),
+            const SizedBox(width: 8),
+            _bottomChip('Fleet', Icons.flight_takeoff, 'fleet'),
+            const Spacer(),
+            _buyButton('A320'),
+            const SizedBox(width: 8),
+            _buyButton('B738'),
+            const SizedBox(width: 8),
+            _buyButton('E190'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _bottomChip(String label, IconData icon, String key) {
+    final active = _activePanel == key;
+    return GestureDetector(
+      onTap: () => setState(() => _activePanel = active ? '' : key),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? Colors.teal.withOpacity(0.2) : Colors.white.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: active ? Colors.tealAccent : Colors.white24),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: Colors.white, size: 16),
+            const SizedBox(width: 6),
+            Text(label, style: const TextStyle(color: Colors.white)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _floatingPanel() {
+    final isRoutes = _activePanel == 'routes';
+    final height = isRoutes ? 200.0 : 150.0;
+    final width = 360.0;
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Material(
+        color: Colors.black.withOpacity(0.85),
+        borderRadius: BorderRadius.circular(14),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 320),
+        constraints: BoxConstraints(maxHeight: height, maxWidth: width),
         child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            padding: const EdgeInsets.all(10),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('Routes', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                  IconButton(
-                    icon: const Icon(Icons.refresh, color: Colors.white70),
-                    onPressed: _busy ? null : _loadState,
-                  )
-                ],
-              ),
-              Text('Cash: \$${_cash.toStringAsFixed(0)}', style: const TextStyle(color: Colors.white70)),
-              Text('Tick: $_tick', style: const TextStyle(color: Colors.white70)),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Flexible(
-                    child: TextField(
-                      controller: _fromCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'From (IATA/ICAO)',
-                        labelStyle: TextStyle(color: Colors.white70),
-                        hintText: 'e.g. IAD',
-                        hintStyle: TextStyle(color: Colors.white38),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        isRoutes ? 'Routes' : 'Fleet',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14),
                       ),
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: TextField(
-                      controller: _toCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'To',
-                        labelStyle: TextStyle(color: Colors.white70),
-                        hintText: 'e.g. LAX',
-                        hintStyle: TextStyle(color: Colors.white38),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white70),
+                        onPressed: () => setState(() => _activePanel = ''),
                       ),
-                      style: const TextStyle(color: Colors.white),
-                    ),
+                    ],
                   ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: _aircraftId,
-                dropdownColor: Colors.black87,
-                decoration: const InputDecoration(
-                  labelText: 'Aircraft',
-                  labelStyle: TextStyle(color: Colors.white70),
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'A320', child: Text('A320', style: TextStyle(color: Colors.white))),
-                  DropdownMenuItem(value: 'B738', child: Text('B737-800', style: TextStyle(color: Colors.white))),
-                  DropdownMenuItem(value: 'E190', child: Text('E190', style: TextStyle(color: Colors.white))),
-                ],
-                onChanged: (v) => setState(() => _aircraftId = v ?? 'A320'),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Text('Freq/day', style: TextStyle(color: Colors.white70)),
-                  Expanded(
-                    child: Slider(
-                      value: _freqPerDay.toDouble(),
-                      min: 1,
-                      max: 10,
-                      divisions: 9,
-                      label: '$_freqPerDay',
-                      onChanged: (v) => setState(() => _freqPerDay = v.toInt()),
-                    ),
-                  ),
-                ],
-              ),
-              Row(
-                children: [
-                  Checkbox(
-                    value: _oneWay,
-                    onChanged: (v) => setState(() => _oneWay = v ?? false),
-                    fillColor: MaterialStateProperty.all(Colors.white24),
-                    checkColor: Colors.black,
-                  ),
-                  const Text('One-way only', style: TextStyle(color: Colors.white70)),
-                ],
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _busy ? null : _createRoute,
-                  child: _busy ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Create route'),
-                ),
-              ),
-              const SizedBox(height: 4),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  onPressed: _busy ? null : _tickOnce,
-                  child: const Text('Advance tick'),
-                ),
-              ),
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
-                ),
-              const SizedBox(height: 8),
-              const Text('Active routes', style: TextStyle(color: Colors.white70)),
-              SizedBox(
-                height: 140,
-                child: _routes.isEmpty
-                    ? const Center(child: Text('No routes yet', style: TextStyle(color: Colors.white54)))
-                    : ListView.builder(
-                        itemCount: _routes.length,
-                        itemBuilder: (context, i) {
-                          final r = _routes[i];
-                          return ListTile(
-                            dense: true,
-                            title: Text('${r.from} → ${r.to} (${r.aircraftId})', style: const TextStyle(color: Colors.white)),
-                            subtitle: Text(
-                              'Freq ${r.freq}/day | Block ${r.blockMins.toStringAsFixed(0)}m | Load ${(r.load * 100).toStringAsFixed(0)}% | Fees \$${r.landingFees.toStringAsFixed(0)}/leg | Rev \$${r.rev.toStringAsFixed(0)} Cost \$${r.cost.toStringAsFixed(0)} Profit \$${r.profit.toStringAsFixed(0)}${r.curfewBlocked ? ' | Curfew blocked' : ''}',
-                              style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  const SizedBox(height: 6),
+                  if (isRoutes) ...[
+                    _routeForm(),
+                    const SizedBox(height: 8),
+                    _ctaRow(),
+                    if (_error != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                      ),
+                    const SizedBox(height: 8),
+                    _sectionTitle('Active routes'),
+                    SizedBox(
+                      height: 90,
+                      child: _routes.isEmpty
+                          ? const Center(child: Text('No routes yet', style: TextStyle(color: Colors.white54)))
+                          : ListView.builder(
+                              itemCount: _routes.length,
+                              itemBuilder: (context, i) => _routeTile(_routes[i]),
                             ),
-                          );
-                        },
-                      ),
-              ),
-              const SizedBox(height: 8),
-              const Text('Fleet', style: TextStyle(color: Colors.white70)),
-              SizedBox(
-                height: 100,
-                child: _fleet.isEmpty
-                    ? const Center(child: Text('No aircraft', style: TextStyle(color: Colors.white54)))
-                    : ListView.builder(
-                        itemCount: _fleet.length,
-                        itemBuilder: (context, i) {
-                          final f = _fleet[i];
-                          final status = f.status == 'active'
-                              ? 'Active'
-                              : f.status == 'delivering'
-                                  ? 'Delivers in ${f.availableIn} ticks'
-                                  : f.status;
-                          return ListTile(
-                            dense: true,
-                            title: Text(f.name, style: const TextStyle(color: Colors.white)),
-                            subtitle: Text(
-                              'Util ${f.util.toStringAsFixed(0)}% | $status',
-                              style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                  ] else ...[
+                    _sectionTitle('Fleet'),
+                    SizedBox(
+                      height: 90,
+                      child: _fleet.isEmpty
+                          ? const Center(child: Text('No aircraft', style: TextStyle(color: Colors.white54)))
+                          : ListView.builder(
+                              itemCount: _fleet.length,
+                              itemBuilder: (context, i) => _fleetTile(_fleet[i]),
                             ),
-                          );
-                        },
-                      ),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  _buyButton('A320'),
-                  const SizedBox(width: 8),
-                  _buyButton('B738'),
-                  const SizedBox(width: 8),
-                  _buyButton('E190'),
+                    ),
+                  ],
                 ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -733,6 +719,8 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
         setState(() {
           _cash = (data['cash'] ?? 0).toDouble();
           _tick = data['tick'] ?? 0;
+          _running = data['is_running'] ?? false;
+          _simSpeed = data['speed'] ?? 1;
           final routes = (data['routes'] as List<dynamic>? ?? []);
           _routes = routes.map((e) => RouteInfo.fromJson(e as Map<String, dynamic>)).toList();
           final fleet = (data['fleet'] as List<dynamic>? ?? []);
@@ -838,15 +826,421 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     }
   }
 
+  Future<void> _startSim(int speed) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final resp = await http.post(
+        Uri.parse('http://localhost:4000/sim/start'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'speed': speed}),
+      );
+      if (resp.statusCode == 200) {
+        await _loadState();
+      } else {
+        setState(() => _error = 'Start failed (${resp.statusCode})');
+      }
+    } catch (e) {
+      setState(() => _error = 'Start failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _pauseSim() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final resp = await http.post(Uri.parse('http://localhost:4000/sim/pause'));
+      if (resp.statusCode == 200) {
+        await _loadState();
+      } else {
+        setState(() => _error = 'Pause failed (${resp.statusCode})');
+      }
+    } catch (e) {
+      setState(() => _error = 'Pause failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _setSimSpeed(int speed) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final resp = await http.post(
+        Uri.parse('http://localhost:4000/sim/speed'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'speed': speed}),
+      );
+      if (resp.statusCode == 200) {
+        await _loadState();
+      } else {
+        setState(() => _error = 'Speed failed (${resp.statusCode})');
+      }
+    } catch (e) {
+      setState(() => _error = 'Speed failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
   Widget _buyButton(String id) {
     final price = _prices[id];
     final lead = _lead[id];
     final label = price != null ? '\$${price ~/ 1_000_000}M' : '';
     final leadTxt = lead != null ? ' • ${lead}t lead' : '';
-    return Expanded(
-      child: ElevatedButton(
-        onPressed: _busy ? null : () => _buy(id),
-        child: Text('$id $label$leadTxt'),
+    return ElevatedButton(
+      onPressed: _busy ? null : () => _buy(id),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.white.withOpacity(0.1),
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      child: Text('$id $label$leadTxt'),
+    );
+  }
+
+  Widget _panelHeader() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: const [
+            Text('Routes', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
+          ],
+        ),
+        IconButton(
+          icon: const Icon(Icons.refresh, color: Colors.white70, size: 18),
+          onPressed: _busy ? null : _loadState,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+        ),
+      ],
+    );
+  }
+
+  Widget _kpiRow() {
+    final cards = [
+      _kpiChip('Cash', '\$${_cash.toStringAsFixed(0)}'),
+      _kpiChip('Tick', '$_tick'),
+      if (_routes.isNotEmpty)
+        _kpiChip(
+          'Avg load',
+          '${(_routes.map((e) => e.load).fold<double>(0, (a, b) => a + b) / _routes.length * 100).toStringAsFixed(0)}%',
+        ),
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: cards
+            .map((c) => Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: c,
+                ))
+            .toList(),
+      ),
+    );
+  }
+
+  Widget _kpiChip(String label, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label.toUpperCase(), style: const TextStyle(color: Colors.white54, fontSize: 10, letterSpacing: 0.5)),
+          Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+        ],
+      ),
+    );
+  }
+
+  Widget _simControls() {
+    return Row(
+      children: [
+        IconButton(
+          icon: Icon(_running ? Icons.pause_circle_filled : Icons.play_circle_fill, color: Colors.white),
+          onPressed: _busy ? null : () => _running ? _pauseSim() : _startSim(_simSpeed),
+        ),
+        Row(
+          children: List.generate(4, (i) {
+            final sp = i + 1;
+            final active = sp == _simSpeed;
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: GestureDetector(
+                onTap: _busy ? null : () => _setSimSpeed(sp),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: active ? Colors.teal.withOpacity(0.2) : Colors.white.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: active ? Colors.tealAccent : Colors.white24),
+                  ),
+                  child: Text('${sp}x', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: active ? FontWeight.w700 : FontWeight.w500)),
+                ),
+              ),
+            );
+          }),
+        ),
+      ],
+    );
+  }
+
+  Widget _routeForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _fromCtrl,
+                decoration: _inputDecoration('From (IATA/ICAO)', 'e.g. IAD'),
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _toCtrl,
+                decoration: _inputDecoration('To', 'e.g. LAX'),
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                value: _aircraftId,
+                dropdownColor: Colors.black87,
+                decoration: _inputDecoration('Aircraft', null),
+                items: const [
+                  DropdownMenuItem(value: 'A320', child: Text('A320', style: TextStyle(color: Colors.white))),
+                  DropdownMenuItem(value: 'B738', child: Text('B737-800', style: TextStyle(color: Colors.white))),
+                  DropdownMenuItem(value: 'E190', child: Text('E190', style: TextStyle(color: Colors.white))),
+                ],
+                onChanged: (v) => setState(() => _aircraftId = v ?? 'A320'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Freq/day', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  Slider(
+                    value: _freqPerDay.toDouble(),
+                    min: 1,
+                    max: 10,
+                    divisions: 9,
+                    activeColor: Colors.tealAccent,
+                    inactiveColor: Colors.white24,
+                    label: '$_freqPerDay',
+                    onChanged: (v) => setState(() => _freqPerDay = v.toInt()),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        GestureDetector(
+          onTap: () => setState(() => _oneWay = !_oneWay),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: _oneWay ? Colors.teal.withOpacity(0.2) : Colors.white.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _oneWay ? Colors.tealAccent : Colors.white24),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('One-way only', style: TextStyle(color: Colors.white70)),
+                Switch(
+                  value: _oneWay,
+                  onChanged: (v) => setState(() => _oneWay = v),
+                  activeColor: Colors.tealAccent,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  InputDecoration _inputDecoration(String label, String? hint) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      labelStyle: const TextStyle(color: Colors.white70),
+      hintStyle: const TextStyle(color: Colors.white38),
+      filled: true,
+      fillColor: Colors.white.withOpacity(0.06),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Colors.white24),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Colors.tealAccent),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    );
+  }
+
+  Widget _ctaRow() {
+    return Row(
+      children: [
+        Expanded(
+          child: ElevatedButton(
+            onPressed: _busy ? null : _createRoute,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.tealAccent,
+              foregroundColor: Colors.black87,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: _busy
+                ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Text('Create route'),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: OutlinedButton(
+            onPressed: _busy ? null : _tickOnce,
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: Colors.white24),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Advance tick'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _sectionTitle(String title) {
+    return Text(
+      title,
+      style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
+    );
+  }
+
+  Widget _routeTile(RouteInfo r) {
+    final profitPos = r.profit >= 0;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('${r.from} → ${r.to}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: profitPos ? Colors.teal.withOpacity(0.2) : Colors.red.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  r.aircraftId,
+                  style: TextStyle(color: profitPos ? Colors.tealAccent : Colors.redAccent, fontSize: 11),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Freq ${r.freq}/d • Block ${r.blockMins.toStringAsFixed(0)}m • Load ${(r.load * 100).toStringAsFixed(0)}% • Fees \$${r.landingFees.toStringAsFixed(0)}/leg',
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+          Text(
+            'Rev \$${r.rev.toStringAsFixed(0)} • Cost \$${r.cost.toStringAsFixed(0)} • Profit \$${r.profit.toStringAsFixed(0)}${r.curfewBlocked ? ' • Curfew blocked' : ''}',
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _fleetTile(OwnedCraft f) {
+    final status = f.status == 'active'
+        ? 'Active'
+        : f.status == 'delivering'
+            ? 'Delivers in ${f.availableIn} ticks'
+            : f.status;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(f.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+              Text(status, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Stack(
+            children: [
+              Container(
+                height: 6,
+                decoration: BoxDecoration(
+                  color: Colors.white12,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+              FractionallySizedBox(
+                widthFactor: (f.util / 100).clamp(0.0, 1.0),
+                child: Container(
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: Colors.tealAccent,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text('Util ${f.util.toStringAsFixed(0)}%', style: const TextStyle(color: Colors.white70, fontSize: 11)),
+        ],
       ),
     );
   }

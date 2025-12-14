@@ -1,96 +1,99 @@
 package main
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"math"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type Airport struct {
-    ID        string  `json:"id"`
-    Ident     string  `json:"ident"`
-    Type      string  `json:"type"`
-    Name      string  `json:"name"`
-    Latitude  float64 `json:"lat"`
-    Longitude float64 `json:"lon"`
-    Country   string  `json:"country"`
-    Region    string  `json:"region"`
-    City      string  `json:"city"`
-    IATA      string  `json:"iata"`
-    ICAO      string  `json:"icao"`
-	RunwayM   int     `json:"runway_m"`
-	SlotsPerDay int   `json:"slots_per_day"`
-	LandingFee float64 `json:"landing_fee"`
-	Curfew    bool    `json:"curfew"`
-	CurfewStart int   `json:"curfew_start_hour"`
-	CurfewEnd   int   `json:"curfew_end_hour"`
+	ID          string  `json:"id"`
+	Ident       string  `json:"ident"`
+	Type        string  `json:"type"`
+	Name        string  `json:"name"`
+	Latitude    float64 `json:"lat"`
+	Longitude   float64 `json:"lon"`
+	Country     string  `json:"country"`
+	Region      string  `json:"region"`
+	City        string  `json:"city"`
+	IATA        string  `json:"iata"`
+	ICAO        string  `json:"icao"`
+	RunwayM     int     `json:"runway_m"`
+	SlotsPerDay int     `json:"slots_per_day"`
+	LandingFee  float64 `json:"landing_fee"`
+	Curfew      bool    `json:"curfew"`
+	CurfewStart int     `json:"curfew_start_hour"`
+	CurfewEnd   int     `json:"curfew_end_hour"`
 }
 
 type AirportStore struct {
-    Airports []Airport
+	Airports []Airport
 }
 
 type Aircraft struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	RangeKm   float64 `json:"range_km"`
-	Seats     int     `json:"seats"`
-	CruiseKmh float64 `json:"cruise_kmh"`
-	FuelCost  float64 `json:"fuel_cost_per_km"`
-	TurnaroundMin int `json:"turnaround_min"`
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	RangeKm       float64 `json:"range_km"`
+	Seats         int     `json:"seats"`
+	CruiseKmh     float64 `json:"cruise_kmh"`
+	FuelCost      float64 `json:"fuel_cost_per_km"`
+	TurnaroundMin int     `json:"turnaround_min"`
 }
 
 type Route struct {
-	ID             string   `json:"id"`
-	From           string   `json:"from"`
-	To             string   `json:"to"`
-	AircraftID     string   `json:"aircraft_id"`
-	FrequencyPerDay int     `json:"frequency_per_day"`
-	EstimatedDemand int     `json:"estimated_demand"`
-	PricePerSeat    float64 `json:"price_per_seat"`
-	EstRevenueTick  float64 `json:"estimated_revenue_tick"`
-	EstCostTick     float64 `json:"estimated_cost_tick"`
-	LoadFactor      float64 `json:"load_factor"`
-	RevenuePerLeg   float64 `json:"revenue_per_leg"`
-	CostPerLeg      float64 `json:"cost_per_leg"`
+	ID                string  `json:"id"`
+	From              string  `json:"from"`
+	To                string  `json:"to"`
+	AircraftID        string  `json:"aircraft_id"`
+	FrequencyPerDay   int     `json:"frequency_per_day"`
+	EstimatedDemand   int     `json:"estimated_demand"`
+	PricePerSeat      float64 `json:"price_per_seat"`
+	EstRevenueTick    float64 `json:"estimated_revenue_tick"`
+	EstCostTick       float64 `json:"estimated_cost_tick"`
+	LoadFactor        float64 `json:"load_factor"`
+	RevenuePerLeg     float64 `json:"revenue_per_leg"`
+	CostPerLeg        float64 `json:"cost_per_leg"`
 	LandingFeesPerLeg float64 `json:"landing_fees_per_leg"`
-	ProfitPerTick   float64 `json:"profit_per_tick"`
-	SeatsSoldPerLeg int     `json:"seats_sold_per_leg"`
-	BlockMinutes    float64 `json:"block_minutes"`
-	CurfewBlocked   bool    `json:"curfew_blocked"`
+	ProfitPerTick     float64 `json:"profit_per_tick"`
+	SeatsSoldPerLeg   int     `json:"seats_sold_per_leg"`
+	BlockMinutes      float64 `json:"block_minutes"`
+	CurfewBlocked     bool    `json:"curfew_blocked"`
 }
 
 type GameState struct {
-	Cash    float64      `json:"cash"`
-	Routes  []Route      `json:"routes"`
-	Fleet   []OwnedCraft `json:"fleet"`
-	Tick    int          `json:"tick"`
+	Cash      float64      `json:"cash"`
+	Routes    []Route      `json:"routes"`
+	Fleet     []OwnedCraft `json:"fleet"`
+	Tick      int          `json:"tick"`
+	IsRunning bool         `json:"is_running"`
+	Speed     int          `json:"speed"`
 }
 
 // OwnedCraft represents a specific aircraft in the player's fleet
 // (not just the catalog entry).
 type OwnedCraft struct {
-	ID          string  `json:"id"`
-	TemplateID  string  `json:"template_id"`
-	Name        string  `json:"name"`
-	RangeKm     float64 `json:"range_km"`
-	Seats       int     `json:"seats"`
-	CruiseKmh   float64 `json:"cruise_kmh"`
-	FuelCost    float64 `json:"fuel_cost_per_km"`
-	TurnaroundMin int   `json:"turnaround_min"`
-	Status      string  `json:"status"` // active, delivering, maintenance
-	AvailableIn int     `json:"available_in_ticks"`
-	Utilization float64 `json:"utilization_pct"`
+	ID            string  `json:"id"`
+	TemplateID    string  `json:"template_id"`
+	Name          string  `json:"name"`
+	RangeKm       float64 `json:"range_km"`
+	Seats         int     `json:"seats"`
+	CruiseKmh     float64 `json:"cruise_kmh"`
+	FuelCost      float64 `json:"fuel_cost_per_km"`
+	TurnaroundMin int     `json:"turnaround_min"`
+	Status        string  `json:"status"` // active, delivering, maintenance
+	AvailableIn   int     `json:"available_in_ticks"`
+	Utilization   float64 `json:"utilization_pct"`
 }
 
 // acquisition configuration
@@ -107,31 +110,37 @@ var (
 	}
 )
 
+var (
+	simCtx    context.Context
+	simCancel context.CancelFunc
+	simTicker *time.Ticker
+)
+
 func seedFleet() []OwnedCraft {
 	out := make([]OwnedCraft, 0, len(aircraftCatalog))
 	for _, ac := range aircraftCatalog {
 		out = append(out, OwnedCraft{
-			ID:           ac.ID + "-1",
-			TemplateID:   ac.ID,
-			Name:         ac.Name,
-			RangeKm:      ac.RangeKm,
-			Seats:        ac.Seats,
-			CruiseKmh:    ac.CruiseKmh,
-			FuelCost:     ac.FuelCost,
+			ID:            ac.ID + "-1",
+			TemplateID:    ac.ID,
+			Name:          ac.Name,
+			RangeKm:       ac.RangeKm,
+			Seats:         ac.Seats,
+			CruiseKmh:     ac.CruiseKmh,
+			FuelCost:      ac.FuelCost,
 			TurnaroundMin: ac.TurnaroundMin,
-			Status:       "active",
-			AvailableIn:  0,
-			Utilization:  0,
+			Status:        "active",
+			AvailableIn:   0,
+			Utilization:   0,
 		})
 	}
 	return out
 }
 
 var (
-	store      *AirportStore
+	store           *AirportStore
 	airportsByIdent map[string]Airport
-	stateMu    sync.Mutex
-	state      GameState
+	stateMu         sync.Mutex
+	state           GameState
 	aircraftCatalog = []Aircraft{
 		{ID: "A320", Name: "Airbus A320", RangeKm: 6100, Seats: 180, CruiseKmh: 830, FuelCost: 4.2, TurnaroundMin: 45},
 		{ID: "B738", Name: "Boeing 737-800", RangeKm: 5765, Seats: 175, CruiseKmh: 840, FuelCost: 4.0, TurnaroundMin: 45},
@@ -162,6 +171,7 @@ func main() {
 	state = GameState{
 		Cash:  500_000_000, // starting cash
 		Fleet: seedFleet(),
+		Speed: 1,
 	}
 
 	r := chi.NewRouter()
@@ -172,11 +182,11 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 
-    r.Get("/airports", func(w http.ResponseWriter, r *http.Request) {
-        w.Header().Set("Content-Type", "application/json")
-        tier := r.URL.Query().Get("tier")
-        fields := r.URL.Query().Get("fields")
-        filtered := filterAirports(store.Airports, tier)
+	r.Get("/airports", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		tier := r.URL.Query().Get("tier")
+		fields := r.URL.Query().Get("fields")
+		filtered := filterAirports(store.Airports, tier)
 		if strings.EqualFold(fields, "basic") {
 			basic := make([]map[string]interface{}, 0, len(filtered))
 			for _, a := range filtered {
@@ -191,10 +201,10 @@ func main() {
 			}
 			return
 		}
-        if err := json.NewEncoder(w).Encode(filtered); err != nil {
-            http.Error(w, "failed to encode", http.StatusInternalServerError)
-        }
-    })
+		if err := json.NewEncoder(w).Encode(filtered); err != nil {
+			http.Error(w, "failed to encode", http.StatusInternalServerError)
+		}
+	})
 
 	r.Get("/state", func(w http.ResponseWriter, r *http.Request) {
 		stateMu.Lock()
@@ -241,19 +251,62 @@ func main() {
 
 	r.Post("/tick", func(w http.ResponseWriter, r *http.Request) {
 		stateMu.Lock()
-		defer stateMu.Unlock()
-		revenue := 0.0
-		cost := 0.0
-		for _, rt := range state.Routes {
-			revenue += rt.EstRevenueTick
-			cost += rt.EstCostTick
+		advanceTickLocked()
+		stateMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(state)
+	})
+
+	r.Post("/sim/start", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Speed int `json:"speed"`
 		}
-		state.Cash += revenue - cost
-		state.Tick++
-		if state.Tick%6 == 0 { // periodically decay utilization so it re-calculates with routes
-			recalcUtilizationLocked()
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Speed == 0 {
+			req.Speed = state.Speed
+			if req.Speed == 0 {
+				req.Speed = 1
+			}
+		}
+		startSim(req.Speed)
+		w.Header().Set("Content-Type", "application/json")
+		stateMu.Lock()
+		defer stateMu.Unlock()
+		json.NewEncoder(w).Encode(state)
+	})
+
+	r.Post("/sim/pause", func(w http.ResponseWriter, r *http.Request) {
+		pauseSim()
+		w.Header().Set("Content-Type", "application/json")
+		stateMu.Lock()
+		defer stateMu.Unlock()
+		json.NewEncoder(w).Encode(state)
+	})
+
+	r.Post("/sim/speed", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Speed int `json:"speed"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Speed <= 0 {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if req.Speed < 1 {
+			req.Speed = 1
+		}
+		if req.Speed > 4 {
+			req.Speed = 4
+		}
+		stateMu.Lock()
+		state.Speed = req.Speed
+		running := state.IsRunning
+		stateMu.Unlock()
+		if running {
+			startSim(req.Speed)
 		}
 		w.Header().Set("Content-Type", "application/json")
+		stateMu.Lock()
+		defer stateMu.Unlock()
 		json.NewEncoder(w).Encode(state)
 	})
 
@@ -305,9 +358,9 @@ func main() {
 		json.NewEncoder(w).Encode(newCraft)
 	})
 
-    addr := ":" + getPort()
-    log.Println("backend listening on", addr)
-    log.Fatal(http.ListenAndServe(addr, r))
+	addr := ":" + getPort()
+	log.Println("backend listening on", addr)
+	log.Fatal(http.ListenAndServe(addr, r))
 }
 
 func getPort() string {
@@ -332,77 +385,77 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func loadAirports(path string) (*AirportStore, error) {
-    f, err := os.Open(path)
-    if err != nil {
-        return nil, err
-    }
-    defer f.Close()
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
 
-    reader := csv.NewReader(f)
-    reader.FieldsPerRecord = -1
-    headers, err := reader.Read()
-    if err != nil {
-        return nil, err
-    }
-    idx := func(name string) int {
-        for i, h := range headers {
-            if h == name {
-                return i
-            }
-        }
-        return -1
-    }
+	reader := csv.NewReader(f)
+	reader.FieldsPerRecord = -1
+	headers, err := reader.Read()
+	if err != nil {
+		return nil, err
+	}
+	idx := func(name string) int {
+		for i, h := range headers {
+			if h == name {
+				return i
+			}
+		}
+		return -1
+	}
 
-    idIdx := idx("id")
-    identIdx := idx("ident")
-    typeIdx := idx("type")
-    nameIdx := idx("name")
-    latIdx := idx("latitude_deg")
-    lonIdx := idx("longitude_deg")
-    countryIdx := idx("iso_country")
-    regionIdx := idx("iso_region")
-    cityIdx := idx("municipality")
-    iataIdx := idx("iata_code")
-    icaoIdx := idx("icao_code")
+	idIdx := idx("id")
+	identIdx := idx("ident")
+	typeIdx := idx("type")
+	nameIdx := idx("name")
+	latIdx := idx("latitude_deg")
+	lonIdx := idx("longitude_deg")
+	countryIdx := idx("iso_country")
+	regionIdx := idx("iso_region")
+	cityIdx := idx("municipality")
+	iataIdx := idx("iata_code")
+	icaoIdx := idx("icao_code")
 
-    var airports []Airport
+	var airports []Airport
 	for {
 		rec, err := reader.Read()
 		if err != nil {
 			break
 		}
 
-        t := rec[typeIdx]
-        if t == "closed" || t == "heliport" || t == "seaplane_base" {
-            continue
-        }
+		t := rec[typeIdx]
+		if t == "closed" || t == "heliport" || t == "seaplane_base" {
+			continue
+		}
 
-        lat, _ := strconv.ParseFloat(rec[latIdx], 64)
-        lon, _ := strconv.ParseFloat(rec[lonIdx], 64)
+		lat, _ := strconv.ParseFloat(rec[latIdx], 64)
+		lon, _ := strconv.ParseFloat(rec[lonIdx], 64)
 
-        airports = append(airports, Airport{
-            ID:        rec[idIdx],
-            Ident:     rec[identIdx],
-            Type:      t,
-            Name:      rec[nameIdx],
-            Latitude:  lat,
-            Longitude: lon,
-            Country:   rec[countryIdx],
-            Region:    rec[regionIdx],
-            City:      rec[cityIdx],
-            IATA:      rec[iataIdx],
-            ICAO:      rec[icaoIdx],
-			RunwayM:    runwayMetersForType(t),
+		airports = append(airports, Airport{
+			ID:          rec[idIdx],
+			Ident:       rec[identIdx],
+			Type:        t,
+			Name:        rec[nameIdx],
+			Latitude:    lat,
+			Longitude:   lon,
+			Country:     rec[countryIdx],
+			Region:      rec[regionIdx],
+			City:        rec[cityIdx],
+			IATA:        rec[iataIdx],
+			ICAO:        rec[icaoIdx],
+			RunwayM:     runwayMetersForType(t),
 			SlotsPerDay: slotsForType(t),
-			LandingFee: landingFeeForType(t),
-			Curfew:     curfewForType(t),
+			LandingFee:  landingFeeForType(t),
+			Curfew:      curfewForType(t),
 			CurfewStart: 22,
 			CurfewEnd:   6,
-        })
+		})
 	}
 
-    log.Printf("loaded %d airports", len(airports))
-    return &AirportStore{Airports: airports}, nil
+	log.Printf("loaded %d airports", len(airports))
+	return &AirportStore{Airports: airports}, nil
 }
 
 func runwayMetersForType(t string) int {
@@ -467,29 +520,29 @@ func curfewAvailableMinutes(startHour, endHour int) float64 {
 }
 
 func filterAirports(all []Airport, tier string) []Airport {
-    if tier == "" || tier == "all" {
-        return all
-    }
-    tier = strings.ToLower(tier)
-    keep := func(t string) bool {
-        switch tier {
-        case "large":
-            return t == "large_airport"
-        case "medium":
-            return t == "large_airport" || t == "medium_airport"
-        case "small":
-            return t == "small_airport"
-        default:
-            return true
-        }
-    }
-    out := make([]Airport, 0, len(all))
-    for _, a := range all {
-        if keep(a.Type) {
-            out = append(out, a)
-        }
-    }
-    return out
+	if tier == "" || tier == "all" {
+		return all
+	}
+	tier = strings.ToLower(tier)
+	keep := func(t string) bool {
+		switch tier {
+		case "large":
+			return t == "large_airport"
+		case "medium":
+			return t == "large_airport" || t == "medium_airport"
+		case "small":
+			return t == "small_airport"
+		default:
+			return true
+		}
+	}
+	out := make([]Airport, 0, len(all))
+	for _, a := range all {
+		if keep(a.Type) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 func buildRoute(from, to, aircraftID string, freq int) (Route, error) {
@@ -560,23 +613,23 @@ func buildRoute(from, to, aircraftID string, freq int) (Route, error) {
 	curfewBlocked := fromAp.Curfew || toAp.Curfew
 
 	route := Route{
-		ID:              strconv.FormatInt(time.Now().UnixNano(), 10),
-		From:            strings.ToUpper(from),
-		To:              strings.ToUpper(to),
-		AircraftID:      ac.ID,
-		FrequencyPerDay: freq,
-		EstimatedDemand: estimatedDemand,
-		PricePerSeat:    price,
-		EstRevenueTick:  revenuePerLeg * legsPerTick,
-		EstCostTick:     costPerLeg * legsPerTick,
-		LoadFactor:      loadFactor,
-		RevenuePerLeg:   revenuePerLeg,
-		CostPerLeg:      costPerLeg,
+		ID:                strconv.FormatInt(time.Now().UnixNano(), 10),
+		From:              strings.ToUpper(from),
+		To:                strings.ToUpper(to),
+		AircraftID:        ac.ID,
+		FrequencyPerDay:   freq,
+		EstimatedDemand:   estimatedDemand,
+		PricePerSeat:      price,
+		EstRevenueTick:    revenuePerLeg * legsPerTick,
+		EstCostTick:       costPerLeg * legsPerTick,
+		LoadFactor:        loadFactor,
+		RevenuePerLeg:     revenuePerLeg,
+		CostPerLeg:        costPerLeg,
 		LandingFeesPerLeg: landingFees,
-		ProfitPerTick:   profitPerTick,
-		SeatsSoldPerLeg: seatsSoldPerLeg,
-		BlockMinutes:    blockMinutes,
-		CurfewBlocked:   curfewBlocked,
+		ProfitPerTick:     profitPerTick,
+		SeatsSoldPerLeg:   seatsSoldPerLeg,
+		BlockMinutes:      blockMinutes,
+		CurfewBlocked:     curfewBlocked,
 	}
 	return route, nil
 }
@@ -729,5 +782,86 @@ func recalcUtilizationLocked() {
 				ac.Status = "active"
 			}
 		}
+	}
+}
+
+func advanceTickLocked() {
+	revenue := 0.0
+	cost := 0.0
+	for _, rt := range state.Routes {
+		revenue += rt.EstRevenueTick
+		cost += rt.EstCostTick
+	}
+	state.Cash += revenue - cost
+	state.Tick++
+	if state.Tick%6 == 0 { // periodically decay utilization so it re-calculates with routes
+		recalcUtilizationLocked()
+	}
+}
+
+func intervalForSpeed(speed int) time.Duration {
+	switch speed {
+	case 1:
+		return 2 * time.Second
+	case 2:
+		return 1 * time.Second
+	case 3:
+		return 500 * time.Millisecond
+	case 4:
+		return 250 * time.Millisecond
+	default:
+		return 2 * time.Second
+	}
+}
+
+func startSim(speed int) {
+	if speed < 1 {
+		speed = 1
+	}
+	if speed > 4 {
+		speed = 4
+	}
+	interval := intervalForSpeed(speed)
+
+	stateMu.Lock()
+	state.Speed = speed
+	state.IsRunning = true
+	stateMu.Unlock()
+
+	if simTicker == nil {
+		simTicker = time.NewTicker(interval)
+	} else {
+		simTicker.Reset(interval)
+	}
+	if simCancel != nil {
+		simCancel()
+	}
+	simCtx, simCancel = context.WithCancel(context.Background())
+
+	go func(ctx context.Context) {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-simTicker.C:
+				stateMu.Lock()
+				advanceTickLocked()
+				stateMu.Unlock()
+			}
+		}
+	}(simCtx)
+}
+
+func pauseSim() {
+	stateMu.Lock()
+	state.IsRunning = false
+	stateMu.Unlock()
+	if simCancel != nil {
+		simCancel()
+		simCancel = nil
+	}
+	if simTicker != nil {
+		simTicker.Stop()
+		simTicker = nil
 	}
 }

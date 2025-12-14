@@ -1,3 +1,9 @@
+install:
+	mkdir -p backend/data
+	curl -L -o backend/data/airports.csv https://ourairports.com/data/airports.csv
+	cd backend && go mod tidy
+	cd frontend && flutter pub get
+
 run-backend:
 	cd backend && PORT=4000 go run .
 

@@ -83,6 +83,7 @@ type Route struct {
 	FrequencyPerDay   int     `json:"frequency_per_day"`
 	EstimatedDemand   int     `json:"estimated_demand"`
 	PricePerSeat      float64 `json:"price_per_seat"`
+	UserPrice         float64 `json:"user_price"`
 	EstRevenueTick    float64 `json:"estimated_revenue_tick"`
 	EstCostTick       float64 `json:"estimated_cost_tick"`
 	LoadFactor        float64 `json:"load_factor"`
@@ -125,6 +126,8 @@ type OwnedCraft struct {
 	AvailableIn   int     `json:"available_in_ticks"`
 	Utilization   float64 `json:"utilization_pct"`
 	Condition     float64 `json:"condition_pct"`
+	OwnershipType string  `json:"ownership_type,omitempty"` // owned, leased
+	MonthlyCost   float64 `json:"monthly_cost,omitempty"`
 }
 
 // acquisition configuration
@@ -216,6 +219,8 @@ func seedFleet() []OwnedCraft {
 			AvailableIn:   0,
 			Utilization:   0,
 			Condition:     100,
+			OwnershipType: "owned",
+			MonthlyCost:   0,
 		})
 	}
 	return out
@@ -340,12 +345,13 @@ func main() {
 
 	r.Post("/routes", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			From       string `json:"from"`
-			To         string `json:"to"`
-			Via        string `json:"via,omitempty"`
-			AircraftID string `json:"aircraft_id"`
-			Frequency  int    `json:"frequency_per_day"`
-			OneWay     bool   `json:"one_way"`
+			From       string  `json:"from"`
+			To         string  `json:"to"`
+			Via        string  `json:"via,omitempty"`
+			AircraftID string  `json:"aircraft_id"`
+			Frequency  int     `json:"frequency_per_day"`
+			OneWay     bool    `json:"one_way"`
+			UserPrice  float64 `json:"user_price"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -353,7 +359,7 @@ func main() {
 		}
 		stateMu.Lock()
 		defer stateMu.Unlock()
-		route, err := buildRoute(req.From, req.To, req.Via, req.AircraftID, req.Frequency)
+		route, err := buildRoute(req.From, req.To, req.Via, req.AircraftID, req.Frequency, req.UserPrice)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -440,6 +446,7 @@ func main() {
 	r.Post("/fleet/purchase", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			TemplateID string `json:"template_id"`
+			Mode       string `json:"mode"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TemplateID == "" {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -459,13 +466,32 @@ func main() {
 			lead = 6
 		}
 
+		mode := strings.ToLower(strings.TrimSpace(req.Mode))
+		if mode == "" {
+			mode = "buy"
+		}
+		var upfront float64
+		var monthly float64
+		ownershipType := "owned"
+		switch mode {
+		case "lease":
+			ownershipType = "leased"
+			upfront = cost * 0.02
+			monthly = cost * 0.01
+		default:
+			upfront = cost
+		}
+		if upfront <= 0 {
+			upfront = cost
+		}
+
 		stateMu.Lock()
 		defer stateMu.Unlock()
-		if state.Cash < cost {
+		if state.Cash < upfront {
 			http.Error(w, "insufficient cash", http.StatusBadRequest)
 			return
 		}
-		state.Cash -= cost
+		state.Cash -= upfront
 		newCraft := OwnedCraft{
 			ID:            ac.ID + "-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 			TemplateID:    ac.ID,
@@ -483,6 +509,8 @@ func main() {
 			AvailableIn:   lead,
 			Utilization:   0,
 			Condition:     100,
+			OwnershipType: ownershipType,
+			MonthlyCost:   monthly,
 		}
 		state.Fleet = append(state.Fleet, newCraft)
 		w.Header().Set("Content-Type", "application/json")
@@ -577,6 +605,11 @@ func loadState(path string) (GameState, error) {
 	var st GameState
 	if err := json.Unmarshal(data, &st); err != nil {
 		return GameState{}, err
+	}
+	for i := range st.Fleet {
+		if st.Fleet[i].OwnershipType == "" {
+			st.Fleet[i].OwnershipType = "owned"
+		}
 	}
 	return st, nil
 }
@@ -757,7 +790,7 @@ func filterAirports(all []Airport, tier string) []Airport {
 	return out
 }
 
-func buildRoute(from, to, via, aircraftID string, freq int) (Route, error) {
+func buildRoute(from, to, via, aircraftID string, freq int, userPrice float64) (Route, error) {
 	if freq <= 0 {
 		freq = 1
 	}
@@ -813,6 +846,25 @@ func buildRoute(from, to, via, aircraftID string, freq int) (Route, error) {
 		}
 	}
 
+	basePrice := 0.13 * distMain
+	if basePrice <= 0 {
+		totalVia := distVia1 + distVia2
+		basePrice = 0.13 * totalVia
+	}
+	if basePrice <= 0 {
+		basePrice = 150
+	}
+	if userPrice <= 0 {
+		userPrice = basePrice
+	}
+	baseDistance := distMain
+	if baseDistance <= 0 {
+		baseDistance = distVia1 + distVia2
+		if baseDistance <= 0 {
+			baseDistance = 1
+		}
+	}
+
 	type leg struct {
 		dist     float64
 		demand   int
@@ -827,15 +879,15 @@ func buildRoute(from, to, via, aircraftID string, freq int) (Route, error) {
 	demandLeg := func(a, b Airport, opts demandOptions) int {
 		return demandEstimateWithOpts(a, b, ac, freq, opts)
 	}
-	stopoverPriceFactor := 1.0
-	if hasVia {
-		totalViaDist := distVia1 + distVia2
-		if totalViaDist > 0 && distMain > 0 {
-			stopoverPriceFactor = distMain / totalViaDist
-			if stopoverPriceFactor > 1 {
-				stopoverPriceFactor = 1
-			}
+	priceForLeg := func(dist float64) float64 {
+		if dist <= 0 || baseDistance <= 0 {
+			return userPrice
 		}
+		p := userPrice * (dist / baseDistance)
+		if p <= 0 {
+			return userPrice
+		}
+		return p
 	}
 
 	legCost := func(a, b Airport, dist float64) (float64, float64) {
@@ -850,12 +902,12 @@ func buildRoute(from, to, via, aircraftID string, freq int) (Route, error) {
 
 	if hasVia {
 		// Outbound: from->via with local + through demand, then via->to
-		stopOpts := demandOptions{Stopover: true, PriceFactor: stopoverPriceFactor}
-		d1 := demandLeg(fromAp, viaAp, demandOptions{}) + demandLeg(fromAp, toAp, stopOpts)
-		d2 := demandLeg(viaAp, toAp, demandOptions{})
+		priceLeg1 := priceForLeg(distVia1)
+		d1 := demandLeg(fromAp, viaAp, demandOptions{Price: priceLeg1}) + demandLeg(fromAp, toAp, demandOptions{Stopover: true, Price: userPrice})
+		d2 := demandLeg(viaAp, toAp, demandOptions{Price: priceForLeg(distVia2)})
 		// Inbound: to->via with local + through demand, then via->from
-		d3 := demandLeg(toAp, viaAp, demandOptions{}) + demandLeg(toAp, fromAp, stopOpts)
-		d4 := demandLeg(viaAp, fromAp, demandOptions{})
+		d3 := demandLeg(toAp, viaAp, demandOptions{Price: priceForLeg(distVia2)}) + demandLeg(toAp, fromAp, demandOptions{Stopover: true, Price: userPrice})
+		d4 := demandLeg(viaAp, fromAp, demandOptions{Price: priceLeg1})
 
 		for _, x := range []struct {
 			dist   float64
@@ -869,7 +921,7 @@ func buildRoute(from, to, via, aircraftID string, freq int) (Route, error) {
 			{distVia1, d4, viaAp, fromAp},
 		} {
 			sold := min(x.demand, ac.Seats)
-			price := 0.13 * x.dist
+			price := priceForLeg(x.dist)
 			rev := float64(sold) * price
 			cost, fees := legCost(x.a, x.b, x.dist)
 			legs = append(legs, leg{
@@ -891,11 +943,11 @@ func buildRoute(from, to, via, aircraftID string, freq int) (Route, error) {
 			a      Airport
 			b      Airport
 		}{
-			{distMain, demandLeg(fromAp, toAp, demandOptions{}), fromAp, toAp},
-			{distMain, demandLeg(toAp, fromAp, demandOptions{}), toAp, fromAp},
+			{distMain, demandLeg(fromAp, toAp, demandOptions{Price: userPrice}), fromAp, toAp},
+			{distMain, demandLeg(toAp, fromAp, demandOptions{Price: userPrice}), toAp, fromAp},
 		} {
 			sold := min(x.demand, ac.Seats)
-			price := 0.13 * x.dist
+			price := userPrice
 			rev := float64(sold) * price
 			cost, fees := legCost(x.a, x.b, x.dist)
 			legs = append(legs, leg{
@@ -938,10 +990,7 @@ func buildRoute(from, to, via, aircraftID string, freq int) (Route, error) {
 		curfewBlocked = true
 	}
 
-	avgPricePerSeat := 0.0
-	if totalSold > 0 {
-		avgPricePerSeat = totalRevenue / float64(totalSold)
-	}
+	avgPricePerSeat := userPrice
 
 	route := Route{
 		ID:                strconv.FormatInt(time.Now().UnixNano(), 10),
@@ -952,6 +1001,7 @@ func buildRoute(from, to, via, aircraftID string, freq int) (Route, error) {
 		FrequencyPerDay:   freq,
 		EstimatedDemand:   totalDemand,
 		PricePerSeat:      avgPricePerSeat,
+		UserPrice:         userPrice,
 		EstRevenueTick:    totalRevenue * float64(freq),
 		EstCostTick:       totalCost * float64(freq),
 		LoadFactor:        loadFactor,
@@ -1094,8 +1144,8 @@ func demandEstimate(fromAp, toAp Airport, ac Aircraft, freq int) int {
 }
 
 type demandOptions struct {
-	Stopover    bool
-	PriceFactor float64
+	Stopover bool
+	Price    float64
 }
 
 func demandEstimateWithOpts(fromAp, toAp Airport, ac Aircraft, freq int, opts demandOptions) int {
@@ -1107,20 +1157,26 @@ func demandEstimateWithOpts(fromAp, toAp Airport, ac Aircraft, freq int, opts de
 	if base > ac.Seats*3 {
 		base = ac.Seats * 3
 	}
-	priceFactor := 1.0
-	if opts.PriceFactor > 0 {
-		priceFactor = opts.PriceFactor
+	basePrice := 0.13 * dist
+	price := basePrice
+	if opts.Price > 0 {
+		price = opts.Price
 	}
-	price := 0.13 * dist * priceFactor
-	priceElasticity := math.Exp(-price / 8000.0)
+	ratio := 1.0
+	if basePrice > 0 {
+		ratio = price / basePrice
+	}
+	priceElasticity := math.Exp(-3.0 * (ratio - 1.0))
+	if priceElasticity < 0.1 {
+		priceElasticity = 0.1
+	}
+	if priceElasticity > 2.5 {
+		priceElasticity = 2.5
+	}
 	freqBoost := 1.0 + (float64(freq-1) * 0.08)
 	d := int(float64(base) * priceElasticity * freqBoost)
 	if opts.Stopover {
-		penalty := 0.8
-		if priceFactor <= 0.85 {
-			penalty = 1.0
-		}
-		d = int(float64(d) * penalty)
+		d = int(float64(d) * 0.8)
 	}
 	if d < 20 {
 		d = 20
@@ -1257,6 +1313,13 @@ func advanceTickLocked() {
 			capacity = float64(ac.Seats)
 		}
 		demand := float64(rt.EstimatedDemand) * randomFactor
+		price := rt.UserPrice
+		if price <= 0 {
+			price = rt.PricePerSeat
+		}
+		if price <= 0 {
+			price = 0.13 * 1000
+		}
 		actualSold := math.Min(capacity, demand)
 		actualRevenue := 0.0
 		actualLoad := 0.0
@@ -1268,18 +1331,26 @@ func advanceTickLocked() {
 			actualRevenue = 0
 			actualLoad = 0
 		} else {
-			actualRevenue = actualSold * rt.PricePerSeat
+			actualRevenue = actualSold * price
 		}
 
 		rt.LastTickRevenue = actualRevenue
 		rt.LastTickLoad = actualLoad
 		rt.LoadFactor = actualLoad
+		rt.PricePerSeat = price
+		rt.UserPrice = price
 		rt.EstRevenueTick = actualRevenue
 		rt.ProfitPerTick = actualRevenue - routeCost
 
 		totalRevenue += actualRevenue
 	}
-	state.Cash += totalRevenue - totalCost
+	leaseCost := 0.0
+	for _, ac := range state.Fleet {
+		if strings.EqualFold(ac.OwnershipType, "leased") && ac.MonthlyCost > 0 {
+			leaseCost += ac.MonthlyCost
+		}
+	}
+	state.Cash += totalRevenue - totalCost - leaseCost
 	advanceFleetTimersLocked()
 	applyMaintenanceWearLocked()
 	state.Tick++

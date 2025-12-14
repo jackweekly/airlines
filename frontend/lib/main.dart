@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:html' as html;
+import 'dart:math' as math;
 import 'dart:ui_web' as ui_web;
 
 import 'package:flutter/foundation.dart';
@@ -370,6 +371,8 @@ class MapboxGlobeWeb extends StatefulWidget {
 
 enum RouteFieldRole { from, via, to }
 
+enum PurchaseMode { buy, lease }
+
 class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   late final String _viewId;
   bool _mapReady = false;
@@ -438,6 +441,10 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   List<AircraftTemplate> _templates = const [];
   bool _loadingTemplates = false;
   String? _templatesError;
+  double _baseTicketPrice = 0;
+  double _ticketPriceMultiplier = 1.0;
+  double _estimatedLoad = 1.0;
+  Map<String, Airport> _airportIndex = {};
   void _notifySelection() {
     final msg = {
       'type': 'set_selection',
@@ -446,6 +453,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       'to': _toCtrl.text.trim(),
     };
     _iframe.contentWindow?.postMessage(msg, '*');
+    _updatePricingModel();
   }
 
   @override
@@ -961,6 +969,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
         'aircraft_id': _aircraftId,
         'frequency_per_day': _freqPerDay,
         'one_way': _oneWay,
+        'user_price': _currentTicketPrice,
       });
       final resp = await http.post(
         Uri.parse('http://localhost:4000/routes'),
@@ -1006,7 +1015,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   Future<void> _loadAirportsList() async {
     try {
       final resp = await http.get(
-        Uri.parse('http://localhost:4000/airports?tier=medium&fields=basic'),
+        Uri.parse('http://localhost:4000/airports?tier=all&fields=basic'),
       );
       if (resp.statusCode == 200) {
         final data = json.decode(resp.body) as List<dynamic>;
@@ -1014,9 +1023,15 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
             .map((e) => Airport.fromJson(e as Map<String, dynamic>))
             .where((a) => a.ident.isNotEmpty)
             .toList();
+        final index = <String, Airport>{};
+        for (final a in list) {
+          index[a.ident.toUpperCase()] = a;
+        }
         setState(() {
           _airportList = list;
+          _airportIndex = index;
         });
+        _updatePricingModel();
       }
     } catch (_) {
       // ignore for now; fallback to manual entry
@@ -1058,7 +1073,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     }
   }
 
-  Future<void> _buy(String templateId) async {
+  Future<void> _buy(String templateId, PurchaseMode mode) async {
     setState(() {
       _busy = true;
       _error = null;
@@ -1067,7 +1082,10 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       final resp = await http.post(
         Uri.parse('http://localhost:4000/fleet/purchase'),
         headers: {'Content-Type': 'application/json'},
-        body: json.encode({'template_id': templateId}),
+        body: json.encode({
+          'template_id': templateId,
+          'mode': mode == PurchaseMode.lease ? 'lease' : 'buy',
+        }),
       );
       if (resp.statusCode == 200) {
         await _loadState();
@@ -1153,19 +1171,62 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
 
   Widget _buyButton(AircraftTemplate template) {
     final id = template.id;
-    final price = _prices[id];
+    final price = _prices[id]?.toDouble();
     final lead = _lead[id];
-    final label = price != null ? '\$${price ~/ 1_000_000}M' : '';
-    final leadTxt = lead != null ? ' • ${lead}t lead' : '';
-    return ElevatedButton(
-      onPressed: _busy ? null : () => _buy(id),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.white.withOpacity(0.1),
-        foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    final buyLabel = price != null ? 'Buy ${_formatMillions(price)}' : 'Buy';
+    final leaseDown = price != null ? price * 0.02 : null;
+    final leaseMonthly = price != null ? price * 0.01 : null;
+    final leaseLabel = (leaseDown != null && leaseMonthly != null)
+        ? 'Lease ${_formatMillions(leaseDown)} down + ${_formatMillions(leaseMonthly)}/tick'
+        : 'Lease';
+    final leadTxt = lead != null ? 'Lead ${lead}t' : '';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white10),
       ),
-      child: Text('$id $label$leadTxt'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${template.name} (${template.seats} seats) $leadTxt',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _busy ? null : () => _buy(id, PurchaseMode.buy),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.tealAccent,
+                    foregroundColor: Colors.black,
+                  ),
+                  child: Text(buyLabel),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _busy ? null : () => _buy(id, PurchaseMode.lease),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white24),
+                  ),
+                  child: Text(leaseLabel, textAlign: TextAlign.center),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -1197,8 +1258,18 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   }
 
   Widget _kpiRow() {
+    final leaseCost = _fleet.fold<double>(
+      0,
+      (sum, f) =>
+          f.ownershipType.toLowerCase() == 'leased' ? sum + f.monthlyCost : sum,
+    );
+    final routeProfit = _routes.fold<double>(
+      0,
+      (sum, r) => sum + r.profit.toDouble(),
+    );
+    final losingCashFlow = routeProfit - leaseCost < 0;
     final cards = [
-      _kpiChip('Cash', '\$${_cash.toStringAsFixed(0)}'),
+      _kpiChip('Cash', '\$${_cash.toStringAsFixed(0)}', danger: losingCashFlow),
       _kpiChip('Tick', '$_tick'),
       if (_routes.isNotEmpty)
         _kpiChip(
@@ -1219,7 +1290,8 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     );
   }
 
-  Widget _kpiChip(String label, String value) {
+  Widget _kpiChip(String label, String value, {bool danger = false}) {
+    final valueColor = danger ? Colors.redAccent : Colors.white;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
@@ -1240,8 +1312,8 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
           ),
           Text(
             value,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: valueColor,
               fontWeight: FontWeight.w600,
               fontSize: 13,
             ),
@@ -1386,6 +1458,8 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
             ),
           ],
         ),
+        const SizedBox(height: 8),
+        _ticketPricingControls(),
         const SizedBox(height: 4),
         Row(
           children: [
@@ -1505,6 +1579,62 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     );
   }
 
+  Widget _ticketPricingControls() {
+    final enabled = _baseTicketPrice > 0;
+    final priceValue = _currentTicketPrice;
+    final multiplierPct = (_ticketPriceMultiplier * 100).toStringAsFixed(0);
+    final loadText = enabled
+        ? '${(_estimatedLoad * 100).clamp(0, 100).toStringAsFixed(0)}%'
+        : '—';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('Ticket price', style: TextStyle(color: Colors.white70)),
+            Text(
+              enabled
+                  ? '\$${priceValue.toStringAsFixed(0)} (${multiplierPct}%)'
+                  : 'Select route first',
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
+        ),
+        Slider(
+          value: _ticketPriceMultiplier.clamp(0.5, 3.0).toDouble(),
+          min: 0.5,
+          max: 3.0,
+          divisions: 25,
+          label: enabled ? '\$${priceValue.toStringAsFixed(0)}' : '—',
+          activeColor: Colors.tealAccent,
+          inactiveColor: Colors.white24,
+          onChanged: enabled
+              ? (v) {
+                  setState(() {
+                    _ticketPriceMultiplier = v;
+                    _estimatedLoad = _estimateLoad(_baseTicketPrice, v);
+                  });
+                }
+              : null,
+        ),
+        Text(
+          'Estimated load: $loadText',
+          style: const TextStyle(color: Colors.white70, fontSize: 12),
+        ),
+      ],
+    );
+  }
+
+  String _formatMillions(double amount) {
+    if (amount >= 1_000_000_000) {
+      return '\$${(amount / 1_000_000_000).toStringAsFixed(1)}B';
+    }
+    final millions = amount / 1_000_000;
+    final decimals = millions >= 10 ? 0 : 1;
+    return '\$${millions.toStringAsFixed(decimals)}M';
+  }
+
   InputDecoration _inputDecoration(String label, String? hint) {
     return InputDecoration(
       labelText: label,
@@ -1524,6 +1654,66 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
     );
   }
+
+  double get _currentTicketPrice {
+    if (_baseTicketPrice <= 0) return 0;
+    return _baseTicketPrice * _ticketPriceMultiplier;
+  }
+
+  void _updatePricingModel() {
+    final base = _computeBasePrice();
+    final load = _estimateLoad(base, _ticketPriceMultiplier);
+    final baseChanged = (_baseTicketPrice - base).abs() > 0.5;
+    final loadChanged = (_estimatedLoad - load).abs() > 0.01;
+    if (!baseChanged && !loadChanged) {
+      return;
+    }
+    setState(() {
+      _baseTicketPrice = base;
+      _estimatedLoad = load;
+    });
+  }
+
+  double _computeBasePrice() {
+    final from = _lookupAirport(_fromCtrl.text.trim());
+    final to = _lookupAirport(_toCtrl.text.trim());
+    if (from == null || to == null) return 0;
+    final dist = _haversine(from.lat, from.lon, to.lat, to.lon);
+    if (dist <= 0) return 0;
+    return 0.13 * dist;
+  }
+
+  double _estimateLoad(double basePrice, double multiplier) {
+    if (basePrice <= 0) return 0;
+    final ratio = multiplier;
+    var elasticity = math.exp(-3.0 * (ratio - 1.0));
+    elasticity = elasticity.clamp(0.05, 1.2);
+    if (elasticity > 1.0) {
+      elasticity = 1.0;
+    }
+    return elasticity;
+  }
+
+  Airport? _lookupAirport(String ident) {
+    if (ident.isEmpty) return null;
+    return _airportIndex[ident.toUpperCase()];
+  }
+
+  double _haversine(double lat1, double lon1, double lat2, double lon2) {
+    const radius = 6371.0;
+    final dLat = _toRad(lat2 - lat1);
+    final dLon = _toRad(lon2 - lon1);
+    final a =
+        math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_toRad(lat1)) *
+            math.cos(_toRad(lat2)) *
+            math.sin(dLon / 2) *
+            math.sin(dLon / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return radius * c;
+  }
+
+  double _toRad(double deg) => deg * math.pi / 180;
 
   Widget _airportAutocomplete(
     TextEditingController controller,
@@ -1669,6 +1859,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     final routeLabel = r.via.isNotEmpty
         ? '${r.from} → ${r.to} (via ${r.via})'
         : '${r.from} → ${r.to}';
+    final displayPrice = r.userPrice > 0 ? r.userPrice : r.price;
     final loadForDisplay = r.lastLoad > 0 ? r.lastLoad : r.load;
     final revForDisplay = r.lastRev > 0 ? r.lastRev : r.rev;
     return Container(
@@ -1717,7 +1908,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
           ),
           const SizedBox(height: 4),
           Text(
-            'Freq ${r.freq}/d • Block ${r.blockMins.toStringAsFixed(0)}m • Last Load ${(loadForDisplay * 100).clamp(0, 999).toStringAsFixed(0)}% • Fees \$${r.landingFees.toStringAsFixed(0)}/leg',
+            'Freq ${r.freq}/d • Block ${r.blockMins.toStringAsFixed(0)}m • Last Load ${(loadForDisplay * 100).clamp(0, 999).toStringAsFixed(0)}% • Fare \$${displayPrice.toStringAsFixed(0)} • Fees \$${r.landingFees.toStringAsFixed(0)}/leg',
             style: const TextStyle(color: Colors.white70, fontSize: 11),
           ),
           Text(
@@ -1828,6 +2019,11 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
             'Condition ${f.condition.toStringAsFixed(0)}%',
             style: const TextStyle(color: Colors.white70, fontSize: 11),
           ),
+          if (f.ownershipType.toLowerCase() == 'leased')
+            Text(
+              'Lease ${_formatMillions(f.monthlyCost)}/tick',
+              style: const TextStyle(color: Colors.white70, fontSize: 11),
+            ),
         ],
       ),
     );
@@ -1843,6 +2039,7 @@ class RouteInfo {
     required this.aircraftId,
     required this.freq,
     required this.price,
+    required this.userPrice,
     required this.rev,
     required this.cost,
     required this.load,
@@ -1861,6 +2058,7 @@ class RouteInfo {
   final String aircraftId;
   final int freq;
   final double price;
+  final double userPrice;
   final double rev;
   final double cost;
   final double load;
@@ -1880,6 +2078,7 @@ class RouteInfo {
       aircraftId: json['aircraft_id'] ?? '',
       freq: json['frequency_per_day'] ?? 0,
       price: (json['price_per_seat'] ?? 0).toDouble(),
+      userPrice: (json['user_price'] ?? 0).toDouble(),
       rev: (json['estimated_revenue_tick'] ?? 0).toDouble(),
       cost: (json['estimated_cost_tick'] ?? 0).toDouble(),
       load: (json['load_factor'] ?? 0).toDouble(),
@@ -1907,6 +2106,8 @@ class OwnedCraft {
     required this.availableIn,
     required this.util,
     required this.condition,
+    required this.ownershipType,
+    required this.monthlyCost,
   });
 
   final String id;
@@ -1921,6 +2122,8 @@ class OwnedCraft {
   final int availableIn;
   final double util;
   final double condition;
+  final String ownershipType;
+  final double monthlyCost;
 
   factory OwnedCraft.fromJson(Map<String, dynamic> json) {
     return OwnedCraft(
@@ -1936,6 +2139,8 @@ class OwnedCraft {
       availableIn: json['available_in_ticks'] ?? 0,
       util: (json['utilization_pct'] ?? 0).toDouble(),
       condition: (json['condition_pct'] ?? 0).toDouble(),
+      ownershipType: json['ownership_type']?.toString() ?? 'owned',
+      monthlyCost: (json['monthly_cost'] ?? 0).toDouble(),
     );
   }
 }

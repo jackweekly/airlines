@@ -32,7 +32,7 @@ func TestBuildRouteEconomicsIncludesFeesAndProfit(t *testing.T) {
 	setupTestAirports()
 	state = GameState{Fleet: seedFleet()}
 
-	rt, err := buildRoute("AAA", "BBB", "", "A320", 2)
+	rt, err := buildRoute("AAA", "BBB", "", "A320", 2, 0)
 	if err != nil {
 		t.Fatalf("buildRoute returned error: %v", err)
 	}

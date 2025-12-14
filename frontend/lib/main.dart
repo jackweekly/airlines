@@ -1021,267 +1021,6 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
 
   // ... (previous methods) ...
   
-  // Update _routeForm to include the button
-  Widget _routeForm() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // ... (existing form rows) ...
-        Row(
-          children: [
-            Expanded(
-              child: _airportAutocomplete(
-                _fromCtrl,
-                'From (IATA/ICAO)',
-                RouteFieldRole.from,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _airportAutocomplete(
-                _viaCtrl,
-                'Via / Stopover (optional)',
-                RouteFieldRole.via,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _airportAutocomplete(_toCtrl, 'To', RouteFieldRole.to),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-         Row(
-          children: [
-            Expanded(
-              child: DropdownButtonFormField<String>(
-                value: _templates.any((t) => t.id == _aircraftId)
-                    ? _aircraftId
-                    : (_templates.isNotEmpty ? _templates.first.id : null),
-                dropdownColor: Colors.black87,
-                decoration: _inputDecoration('Aircraft', null),
-                items: _templates
-                    .map(
-                      (tpl) => DropdownMenuItem(
-                        value: tpl.id,
-                        child: Text(
-                          '${tpl.name} (${tpl.seats} seats)',
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      ),
-                    )
-                    .toList(),
-                hint: const Text(
-                  'Select aircraft',
-                  style: TextStyle(color: Colors.white),
-                ),
-                onChanged: _templates.isEmpty
-                    ? null
-                    : (v) {
-                        if (v == null) return;
-                        setState(() => _aircraftId = v);
-                      },
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Round Trips/day',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                  Slider(
-                    value: _freqPerDay.toDouble(),
-                    min: 1,
-                    max: 10,
-                    divisions: 9,
-                    activeColor: Colors.tealAccent,
-                    inactiveColor: Colors.white24,
-                    label: '$_freqPerDay',
-                    onChanged: (v) => setState(() => _freqPerDay = v.toInt()),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        _ticketPricingControls(),
-        const SizedBox(height: 4),
-        Row(
-           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-           children: [
-              // Picker Buttons
-               Row(
-                 children: [
-                    TextButton(
-                      onPressed: () => setState(() {
-                        _pickingFrom = true;
-                        _pickingVia = false;
-                        _pickingTo = false;
-                      }),
-                      style: TextButton.styleFrom(
-                        backgroundColor: _pickingFrom
-                            ? Colors.teal.withOpacity(0.2)
-                            : Colors.transparent,
-                        side: BorderSide(
-                          color: _pickingFrom ? Colors.tealAccent : Colors.white24,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8)
-                      ),
-                      child: Text(
-                        _pickingFrom ? 'From…' : 'From',
-                        style: const TextStyle(color: Colors.white, fontSize: 12),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    TextButton(
-                      onPressed: () => setState(() {
-                        _pickingVia = true;
-                        _pickingFrom = false;
-                        _pickingTo = false;
-                      }),
-                      style: TextButton.styleFrom(
-                        backgroundColor: _pickingVia
-                            ? Colors.teal.withOpacity(0.2)
-                            : Colors.transparent,
-                        side: BorderSide(
-                          color: _pickingVia ? Colors.tealAccent : Colors.white24,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8)
-                      ),
-                      child: Text(
-                        _pickingVia ? 'Via…' : 'Via',
-                        style: const TextStyle(color: Colors.white, fontSize: 12),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    TextButton(
-                      onPressed: () => setState(() {
-                        _pickingTo = true;
-                        _pickingFrom = false;
-                        _pickingVia = false;
-                      }),
-                      style: TextButton.styleFrom(
-                        backgroundColor: _pickingTo
-                            ? Colors.teal.withOpacity(0.2)
-                            : Colors.transparent,
-                        side: BorderSide(
-                          color: _pickingTo ? Colors.tealAccent : Colors.white24,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8)
-                      ),
-                      child: Text(
-                        _pickingTo ? 'To…' : 'To',
-                        style: const TextStyle(color: Colors.white, fontSize: 12),
-                      ),
-                    ),
-                 ]
-               ),
-              // Swap + Analyze Buttons
-               Row(
-                 children: [
-                   IconButton(
-                    icon: const Icon(Icons.swap_horiz, color: Colors.white70),
-                     onPressed: () {
-                      final tmp = _fromCtrl.text;
-                      setState(() {
-                         _fromCtrl.text = _toCtrl.text;
-                         _toCtrl.text = tmp;
-                      });
-                       _notifySelection();
-                    },
-                   ),
-                   const SizedBox(width: 4),
-                   OutlinedButton.icon(
-                      onPressed: _analyzing ? null : _analyzeRoute,
-                      icon: const Icon(Icons.analytics, size: 16),
-                      label: const Text('Analyze', style: TextStyle(fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
-                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                         side: const BorderSide(color: Colors.tealAccent),
-                         foregroundColor: Colors.tealAccent,
-                      ),
-                   )
-                 ]
-               )
-           ]
-        ),
-         const SizedBox(height: 4),
-        // One Way Toggle
-        GestureDetector(
-          onTap: () => setState(() => _oneWay = !_oneWay),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              color: _oneWay
-                  ? Colors.teal.withOpacity(0.2)
-                  : Colors.white.withOpacity(0.06),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: _oneWay ? Colors.tealAccent : Colors.white24,
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'One-way flight',
-                  style: TextStyle(color: Colors.white),
-                ),
-                Switch(
-                  value: _oneWay,
-                  onChanged: (v) => setState(() => _oneWay = v),
-                  activeColor: Colors.tealAccent,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-class RouteAnalysisResult {
-  final String aircraftType;
-  final double frequency;
-  final double loadFactor;
-  final double dailyProfit;
-  final double roiScore;
-  final bool valid;
-
-  RouteAnalysisResult({
-    required this.aircraftType,
-    required this.frequency,
-    required this.loadFactor,
-    required this.dailyProfit,
-    required this.roiScore,
-    required this.valid,
-  });
-
-  factory RouteAnalysisResult.fromJson(Map<String, dynamic> json) {
-    return RouteAnalysisResult(
-      aircraftType: json['aircraft_type'] ?? '',
-      frequency: (json['frequency'] ?? 0).toDouble(),
-      loadFactor: (json['load_factor'] ?? 0).toDouble(),
-      dailyProfit: (json['daily_profit'] ?? 0).toDouble(),
-      roiScore: (json['roi_score'] ?? 0).toDouble(),
-      valid: json['valid'] ?? false,
-    );
-  }
-}
-
   Future<void> _loadState() async {
     setState(() {
       _busy = true;
@@ -2673,6 +2412,35 @@ class Airport {
       city: json['city']?.toString() ?? '',
       iata: json['iata']?.toString() ?? '',
       icao: json['icao']?.toString() ?? '',
+    );
+  }
+}
+
+class RouteAnalysisResult {
+  final String aircraftType;
+  final double frequency;
+  final double loadFactor;
+  final double dailyProfit;
+  final double roiScore;
+  final bool valid;
+
+  RouteAnalysisResult({
+    required this.aircraftType,
+    required this.frequency,
+    required this.loadFactor,
+    required this.dailyProfit,
+    required this.roiScore,
+    required this.valid,
+  });
+
+  factory RouteAnalysisResult.fromJson(Map<String, dynamic> json) {
+    return RouteAnalysisResult(
+      aircraftType: json['aircraft_type'] ?? '',
+      frequency: (json['frequency'] ?? 0).toDouble(),
+      loadFactor: (json['load_factor'] ?? 0).toDouble(),
+      dailyProfit: (json['daily_profit'] ?? 0).toDouble(),
+      roiScore: (json['roi_score'] ?? 0).toDouble(),
+      valid: json['valid'] ?? false,
     );
   }
 }

@@ -7,18 +7,45 @@
   <style>
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
     #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+    #legend {
+      position: absolute;
+      right: 12px;
+      bottom: 12px;
+      background: rgba(0,0,0,0.65);
+      color: #fff;
+      font-family: sans-serif;
+      font-size: 12px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      line-height: 1.4;
+    }
+    #legend .row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+    #legend .swatch { width: 12px; height: 12px; border-radius: 999px; border: 1px solid #0f172a; }
   </style>
 </head>
 <body>
   <div id="map"></div>
+  <div id="legend">
+    <div class="row"><span class="swatch" style="background:#38bdf8;"></span>Routes (profit/neutral)</div>
+    <div class="row"><span class="swatch" style="background:#f87171;"></span>Routes (loss)</div>
+    <div class="row"><span class="swatch" style="background:#f97316;"></span>Curfewed airport</div>
+    <div class="row"><span class="swatch" style="background:#eab308;"></span>Slots &gt;=70%</div>
+    <div class="row"><span class="swatch" style="background:#ef4444;"></span>Slots &gt;=90%</div>
+  </div>
   <script src="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.js"></script>
   <script>
     (function() {
       const params = new URLSearchParams(window.location.search);
       const token = params.get('token');
-      const style = params.get('style') || 'mapbox://styles/mapbox/dark-v11';
+      const styleParam = params.get('style');
+      const style = styleParam
+        ? (styleParam.startsWith('mapbox://') ? styleParam : `mapbox://styles/${styleParam}`)
+        : 'mapbox://styles/mapbox/dark-v11';
       const center = params.get('center') ? params.get('center').split(',').map(parseFloat) : [-77.2, 38.9];
       const zoom = params.get('zoom') ? parseFloat(params.get('zoom')) : 2.5;
+      const backend = params.get('backend') || `${location.protocol}//${location.hostname}:4000`;
+      const airportsByIdent = {};
+      let airportsGeojson = null;
       if (!token) {
         document.getElementById('map').innerHTML = '<p style="color:red">Missing Mapbox token</p>';
         return;
@@ -31,9 +58,393 @@
         zoom,
         projection: 'globe'
       });
+
       map.on('style.load', () => {
         map.setFog({});
+        // Add 3D buildings for non-satellite styles
+            if (!style.includes('satellite')) {
+              const layers = map.getStyle().layers;
+              let labelLayerId = null;
+              for (const layer of layers) {
+                if (layer.type === 'symbol' && layer.layout && layer.layout['text-field']) {
+              labelLayerId = layer.id;
+              break;
+            }
+          }
+          try {
+            map.addLayer(
+              {
+                id: '3d-buildings',
+                source: 'composite',
+                'source-layer': 'building',
+                filter: ['==', 'extrude', 'true'],
+                type: 'fill-extrusion',
+                minzoom: 15,
+                paint: {
+                  'fill-extrusion-color': '#aaa',
+                  'fill-extrusion-height': [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    15,
+                    0,
+                    15.05,
+                    ['get', 'height']
+                  ],
+                  'fill-extrusion-base': [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    15,
+                    0,
+                    15.05,
+                    ['get', 'min_height']
+                  ],
+                  'fill-extrusion-opacity': 0.6
+                }
+              },
+              labelLayerId ? labelLayerId : undefined
+            );
+          } catch (e) {
+            console.error('Failed to add 3D buildings', e);
+          }
+        }
       });
+
+      // Fetch airports from backend and render as clustered circles
+      map.on('load', () => {
+        fetch(`${backend}/airports`)
+          .then(resp => resp.json())
+          .then(data => {
+            const features = data.map(a => ({
+              type: 'Feature',
+              geometry: {
+                type: 'Point',
+                coordinates: [a.lon, a.lat]
+              },
+              properties: {
+                id: a.id || '',
+                ident: a.ident || '',
+                iata: a.iata || '',
+                icao: a.icao || '',
+                name: a.name || a.ident,
+                city: a.city || '',
+                country: a.country || '',
+                type: a.type || '',
+                runway_m: a.runway_m || 0,
+                slots_per_day: a.slots_per_day || 0,
+                slot_use: 0,
+                slot_pct: 0,
+                landing_fee: a.landing_fee || 0,
+                curfew: !!a.curfew,
+                curfew_start: a.curfew_start_hour ?? null,
+                curfew_end: a.curfew_end_hour ?? null
+              }
+            }));
+            // Build quick lookup for drawing routes later
+            data.forEach(a => {
+              const key = (a.ident || '').toUpperCase();
+              if (!key) return;
+              airportsByIdent[key] = { lon: a.lon, lat: a.lat, name: a.name || key };
+            });
+            airportsGeojson = {
+              type: 'FeatureCollection',
+              features
+            };
+            map.addSource('airports', {
+              type: 'geojson',
+              data: airportsGeojson,
+              cluster: true,
+              clusterMaxZoom: 8,
+              clusterRadius: 40
+            });
+
+            map.addLayer({
+              id: 'clusters',
+              type: 'circle',
+              source: 'airports',
+              filter: ['has', 'point_count'],
+              paint: {
+                'circle-color': '#2dd4bf',
+                'circle-radius': [
+                  'step',
+                  ['get', 'point_count'],
+                  10, 50,
+                  14, 100,
+                  18
+                ],
+                'circle-opacity': 0.85
+              }
+            });
+
+            map.addLayer({
+              id: 'cluster-count',
+              type: 'symbol',
+              source: 'airports',
+              filter: ['has', 'point_count'],
+              layout: {
+                'text-field': ['get', 'point_count_abbreviated'],
+                'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
+                'text-size': 11
+              },
+              paint: {
+                'text-color': '#0f172a'
+              }
+            });
+
+            map.addLayer({
+              id: 'unclustered-airports',
+              type: 'circle',
+              source: 'airports',
+              filter: ['!', ['has', 'point_count']],
+              paint: {
+                'circle-color': [
+                  'case',
+                  ['==', ['get', 'curfew'], true], '#f97316',
+                  ['>=', ['get', 'slot_pct'], 90], '#ef4444',
+                  ['>=', ['get', 'slot_pct'], 70], '#eab308',
+                  '#e5e5e5'
+                ],
+                'circle-radius': 4,
+                'circle-stroke-width': 1,
+                'circle-stroke-color': '#0f172a',
+                'circle-opacity': 0.9
+              }
+            });
+
+            const popup = new mapboxgl.Popup({
+              closeButton: true,
+              closeOnClick: true
+            });
+
+            function airportHtml(props) {
+              const code = props.iata || props.icao || props.ident || '';
+              const city = props.city || '';
+              const country = props.country || '';
+              const type = props.type || '';
+              const runway = props.runway_m ? `${props.runway_m}m` : 'n/a';
+              const slots = props.slots_per_day ? `${props.slots_per_day}/day` : 'n/a';
+              const fee = props.landing_fee ? `$${props.landing_fee}` : 'n/a';
+              const slotUse = props.slot_use ? `${props.slot_use}` : '0';
+              const slotPct = props.slot_pct ? `${props.slot_pct}%` : '0%';
+              const curfew = props.curfew ? `Curfew ${props.curfew_start}:00-${props.curfew_end}:00` : 'No curfew';
+              return `
+                <div style="font-family: sans-serif; min-width: 180px;">
+                  <div style="font-weight: 600; margin-bottom: 4px;">${props.name || code}</div>
+                  <div style="color:#475569; font-size: 12px; margin-bottom: 6px;">${[city, country].filter(Boolean).join(', ')}</div>
+                  <div style="font-size: 12px; color:#0f172a;">Code: <strong>${code}</strong></div>
+                  <div style="font-size: 12px; color:#0f172a;">Type: ${type}</div>
+                  <div style="font-size: 12px; color:#0f172a;">Runway: ${runway}</div>
+                  <div style="font-size: 12px; color:#0f172a;">Slots: ${slots} (use ${slotUse}, ${slotPct})</div>
+                  <div style="font-size: 12px; color:#0f172a;">Landing fee: ${fee}</div>
+                  <div style="font-size: 12px; color:#0f172a;">${curfew}</div>
+                </div>
+              `;
+            }
+
+            function showAirportPopup(feature) {
+              const coords = feature.geometry.coordinates.slice();
+              popup.setLngLat(coords).setHTML(airportHtml(feature.properties)).addTo(map);
+            }
+
+            map.on('click', 'unclustered-airports', (e) => {
+              if (!e.features || !e.features.length) return;
+              showAirportPopup(e.features[0]);
+            });
+
+            map.on('click', 'clusters', (e) => {
+              const features = map.queryRenderedFeatures(e.point, { layers: ['clusters'] });
+              if (!features.length) return;
+              const clusterId = features[0].properties.cluster_id;
+              const source = map.getSource('airports');
+              source.getClusterLeaves(clusterId, 20, 0, (err, leaves) => {
+                if (err) {
+                  console.error('getClusterLeaves failed', err);
+                  return;
+                }
+                const list = leaves
+                  .map((leaf, idx) => {
+                    const p = leaf.properties;
+                    const label = p.iata || p.icao || p.ident || `Airport ${idx + 1}`;
+                    const name = p.name || '';
+                    return `<li data-idx="${idx}" style="cursor:pointer; padding:4px 0; border-bottom:1px solid #e2e8f0;">
+                      <div style="font-weight:600;">${label}</div>
+                      <div style="font-size:12px; color:#475569;">${name}</div>
+                    </li>`;
+                  })
+                  .join('');
+                const extra = leaves.length === 20 ? '<div style="font-size:12px; color:#94a3b8; margin-top:6px;">Showing first 20</div>' : '';
+                const html = `
+                  <div style="font-family: sans-serif; min-width:220px;">
+                    <div style="font-weight:700; margin-bottom:6px;">Airports in cluster</div>
+                    <ul style="list-style:none; padding:0; margin:0; max-height:200px; overflow:auto;">${list}</ul>
+                    ${extra}
+                  </div>`;
+                popup.setLngLat(features[0].geometry.coordinates).setHTML(html).addTo(map);
+
+                // Attach click handlers once the popup is added to the DOM
+                setTimeout(() => {
+                  const items = popup.getElement().querySelectorAll('li[data-idx]');
+                  items.forEach((el) => {
+                    el.addEventListener('click', () => {
+                      const idx = parseInt(el.getAttribute('data-idx'), 10);
+                      const leaf = leaves[idx];
+                      popup.remove();
+                      showAirportPopup(leaf);
+                    });
+                  });
+                }, 0);
+              });
+            });
+
+            map.on('mouseenter', 'clusters', () => {
+              map.getCanvas().style.cursor = 'pointer';
+            });
+            map.on('mouseleave', 'clusters', () => {
+              map.getCanvas().style.cursor = '';
+            });
+            map.on('mouseenter', 'unclustered-airports', () => {
+              map.getCanvas().style.cursor = 'pointer';
+            });
+            map.on('mouseleave', 'unclustered-airports', () => {
+              map.getCanvas().style.cursor = '';
+            });
+
+            // Prepare route source/layer so newly created routes show up as lines
+            map.addSource('routes', {
+              type: 'geojson',
+              data: { type: 'FeatureCollection', features: [] }
+            });
+            map.addLayer({
+              id: 'routes-line',
+              type: 'line',
+              source: 'routes',
+              paint: {
+                'line-color': [
+                  'case',
+                  ['<', ['get', 'profit'], 0], '#f87171',
+                  '#38bdf8'
+                ],
+                'line-width': 2.4,
+                'line-opacity': 0.9
+              }
+            });
+
+            const routePopup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false });
+            map.on('mouseenter', 'routes-line', () => {
+              map.getCanvas().style.cursor = 'pointer';
+            });
+            map.on('mouseleave', 'routes-line', () => {
+              map.getCanvas().style.cursor = '';
+              routePopup.remove();
+            });
+            map.on('mousemove', 'routes-line', (e) => {
+              if (!e.features || !e.features.length) return;
+              const f = e.features[0];
+              const p = f.properties || {};
+              const html = `
+                <div style="font-family: sans-serif; min-width: 200px;">
+                  <div style="font-weight:700; margin-bottom:4px;">${p.from} → ${p.to}</div>
+                  <div style="font-size:12px; color:#0f172a;">Freq ${p.freq}/day • Block ${p.block_mins}m</div>
+                  <div style="font-size:12px; color:#0f172a;">Load ${p.load}% • Fees $${p.fees}/leg</div>
+                  <div style="font-size:12px; color:#0f172a;">Rev $${p.rev} Cost $${p.cost} Profit $${p.profit}</div>
+                </div>
+              `;
+              routePopup.setLngLat(e.lngLat).setHTML(html).addTo(map);
+            });
+
+            function refreshRoutes() {
+              fetch(`${backend}/state`)
+                .then(resp => resp.ok ? resp.json() : Promise.reject(new Error(`state ${resp.status}`)))
+                .then(state => {
+                  const routes = state.routes || [];
+                  const slotUse = {};
+                  routes.forEach(r => {
+                    const fromId = (r.from || '').toUpperCase();
+                    const toId = (r.to || '').toUpperCase();
+                    const freq = r.frequency_per_day || 0;
+                    slotUse[fromId] = (slotUse[fromId] || 0) + freq;
+                    slotUse[toId] = (slotUse[toId] || 0) + freq;
+                  });
+                  const features = routes.map(r => {
+                    const from = airportsByIdent[(r.from || '').toUpperCase()];
+                    const to = airportsByIdent[(r.to || '').toUpperCase()];
+                    if (!from || !to) return null;
+                    const arc = greatCircle([from.lon, from.lat], [to.lon, to.lat], 64);
+                    return {
+                      type: 'Feature',
+                      geometry: {
+                        type: 'LineString',
+                        coordinates: arc
+                      },
+                      properties: {
+                        id: r.id || `${r.from}-${r.to}`,
+                        from: r.from || '',
+                        to: r.to || '',
+                        aircraft: r.aircraft_id || '',
+                        freq: r.frequency_per_day || 0,
+                        profit: Math.round(r.profit_per_tick || 0),
+                        cost: Math.round(r.estimated_cost_tick || 0),
+                        rev: Math.round(r.estimated_revenue_tick || 0),
+                        load: Math.round((r.load_factor || 0) * 100),
+                        fees: Math.round(r.landing_fees_per_leg || 0),
+                        block_mins: Math.round(r.block_minutes || 0)
+                      }
+                    };
+                  }).filter(Boolean);
+                  const routesSource = map.getSource('routes');
+                  if (routesSource) {
+                    routesSource.setData({ type: 'FeatureCollection', features });
+                  }
+                  if (airportsGeojson) {
+                    airportsGeojson.features.forEach(f => {
+                      const slots = f.properties.slots_per_day || 0;
+                      const used = slotUse[f.properties.ident] || 0;
+                      const pct = slots > 0 ? Math.min(100, Math.round((used / slots) * 100)) : 0;
+                      f.properties.slot_use = used;
+                      f.properties.slot_pct = pct;
+                    });
+                    const apSource = map.getSource('airports');
+                    if (apSource) {
+                      apSource.setData(airportsGeojson);
+                    }
+                  }
+                })
+                .catch(err => console.error('Failed to refresh routes', err));
+            }
+
+            // Initial render + periodic refresh so the map follows UI changes
+            refreshRoutes();
+            setInterval(refreshRoutes, 4000);
+          })
+          .catch(err => {
+            console.error('Failed to load airports', err);
+          });
+      });
+
+      function greatCircle(from, to, steps) {
+        const [lon1, lat1] = from.map(toRad);
+        const [lon2, lat2] = to.map(toRad);
+        const d = 2 * Math.asin(Math.sqrt(Math.sin((lat2 - lat1) / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2));
+        if (d === 0) return [from, to];
+        const coords = [];
+        const n = steps || 64;
+        for (let i = 0; i <= n; i++) {
+          const f = i / n;
+          const A = Math.sin((1 - f) * d) / Math.sin(d);
+          const B = Math.sin(f * d) / Math.sin(d);
+          const x = A * Math.cos(lat1) * Math.cos(lon1) + B * Math.cos(lat2) * Math.cos(lon2);
+          const y = A * Math.cos(lat1) * Math.sin(lon1) + B * Math.cos(lat2) * Math.sin(lon2);
+          const z = A * Math.sin(lat1) + B * Math.sin(lat2);
+          const lat = Math.atan2(z, Math.sqrt(x * x + y * y));
+          const lon = Math.atan2(y, x);
+          coords.push([toDeg(lon), toDeg(lat)]);
+        }
+        return coords;
+      }
+
+      function toRad(deg) { return deg * Math.PI / 180; }
+      function toDeg(rad) { return rad * 180 / Math.PI; }
     })();
   </script>
 </body>

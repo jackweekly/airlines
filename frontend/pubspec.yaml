@@ -38,6 +38,8 @@ dependencies:
   flutter_map: ^8.2.2
   latlong2: ^0.9.1
   flutter_map_marker_cluster: ^8.2.2
+  http: ^1.2.2
+  pointer_interceptor: ^0.10.1
 
 dev_dependencies:
   flutter_test:

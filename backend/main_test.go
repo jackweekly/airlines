@@ -14,6 +14,18 @@ func setupTestAirports() {
 		"AAA": store.Airports[0],
 		"BBB": store.Airports[1],
 	}
+	aircraftCatalog = []Aircraft{
+		{
+			ID:            "A320",
+			Name:          "Airbus A320",
+			Role:          "passenger",
+			RangeKm:       6100,
+			Seats:         180,
+			CruiseKmh:     830,
+			FuelCost:      4.2,
+			TurnaroundMin: 45,
+		},
+	}
 }
 
 func TestBuildRouteEconomicsIncludesFeesAndProfit(t *testing.T) {

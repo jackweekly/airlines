@@ -44,11 +44,32 @@ type AirportStore struct {
 type Aircraft struct {
 	ID            string  `json:"id"`
 	Name          string  `json:"name"`
+	Role          string  `json:"role"`
 	RangeKm       float64 `json:"range_km"`
 	Seats         int     `json:"seats"`
 	CruiseKmh     float64 `json:"cruise_kmh"`
 	FuelCost      float64 `json:"fuel_cost_per_km"`
 	TurnaroundMin int     `json:"turnaround_min"`
+	Crew          int     `json:"crew,omitempty"`
+	ThreeClass    int     `json:"three_class_seats,omitempty"`
+	TwoClass      int     `json:"two_class_seats,omitempty"`
+	OneClassMax   int     `json:"one_class_max_seats,omitempty"`
+	CargoVolumeM3 float64 `json:"cargo_volume_m3,omitempty"`
+	MaxPayloadKg  float64 `json:"max_payload_kg,omitempty"`
+	MTOWKg        float64 `json:"mtow_kg,omitempty"`
+	OEWKg         float64 `json:"oew_kg,omitempty"`
+	FuelCapacityL float64 `json:"fuel_capacity_l,omitempty"`
+	LengthM       float64 `json:"length_m,omitempty"`
+	WingspanM     float64 `json:"wingspan_m,omitempty"`
+	HeightM       float64 `json:"height_m,omitempty"`
+	WingAreaM2    float64 `json:"wing_area_m2,omitempty"`
+	EngineType    string  `json:"engine_type,omitempty"`
+	EngineThrust  float64 `json:"engine_thrust_kn,omitempty"`
+	ServiceCeilM  float64 `json:"service_ceiling_m,omitempty"`
+	MaxSpeedKmh   float64 `json:"max_speed_kmh,omitempty"`
+	TakeoffDistM  float64 `json:"takeoff_distance_m,omitempty"`
+	LandingDistM  float64 `json:"landing_distance_m,omitempty"`
+	IcaoType      string  `json:"icao_type,omitempty"`
 }
 
 type Route struct {
@@ -87,11 +108,15 @@ type OwnedCraft struct {
 	ID            string  `json:"id"`
 	TemplateID    string  `json:"template_id"`
 	Name          string  `json:"name"`
+	Role          string  `json:"role"`
 	RangeKm       float64 `json:"range_km"`
 	Seats         int     `json:"seats"`
 	CruiseKmh     float64 `json:"cruise_kmh"`
 	FuelCost      float64 `json:"fuel_cost_per_km"`
 	TurnaroundMin int     `json:"turnaround_min"`
+	Crew          int     `json:"crew,omitempty"`
+	CargoVolumeM3 float64 `json:"cargo_volume_m3,omitempty"`
+	MaxPayloadKg  float64 `json:"max_payload_kg,omitempty"`
 	Status        string  `json:"status"` // active, delivering, maintenance
 	AvailableIn   int     `json:"available_in_ticks"`
 	Utilization   float64 `json:"utilization_pct"`
@@ -100,14 +125,52 @@ type OwnedCraft struct {
 // acquisition configuration
 var (
 	aircraftCosts = map[string]float64{
-		"A320": 98_000_000,
-		"B738": 96_000_000,
-		"E190": 52_000_000,
+		"ATR72":      26_000_000,
+		"CRJ9":       44_000_000,
+		"E175":       48_000_000,
+		"E190":       52_000_000,
+		"E195E2":     60_000_000,
+		"B737-700":   82_000_000,
+		"B737-800":   96_000_000,
+		"B737MAX8":   120_000_000,
+		"A320":       98_000_000,
+		"A320NEO":    110_000_000,
+		"A321NEO":    125_000_000,
+		"B767-300ER": 220_000_000,
+		"B777-300ER": 375_000_000,
+		"B787-9":     292_000_000,
+		"A330-900":   296_000_000,
+		"A350-900":   317_000_000,
+		"B767-300F":  220_000_000,
+		"B777F":      352_000_000,
+		"A330-200F":  240_000_000,
+		"B747-8F":    419_000_000,
+		"B747-400":   250_000_000,
+		"A380-800":   445_000_000,
 	}
 	aircraftLeadTicks = map[string]int{
-		"A320": 8,
-		"B738": 8,
-		"E190": 6,
+		"ATR72":      5,
+		"CRJ9":       6,
+		"E175":       6,
+		"E190":       6,
+		"E195E2":     7,
+		"B737-700":   7,
+		"B737-800":   8,
+		"B737MAX8":   8,
+		"A320":       8,
+		"A320NEO":    8,
+		"A321NEO":    9,
+		"B767-300ER": 10,
+		"B777-300ER": 11,
+		"B787-9":     10,
+		"A330-900":   10,
+		"A350-900":   11,
+		"B767-300F":  9,
+		"B777F":      11,
+		"A330-200F":  9,
+		"B747-8F":    12,
+		"B747-400":   12,
+		"A380-800":   12,
 	}
 )
 
@@ -118,17 +181,29 @@ var (
 )
 
 func seedFleet() []OwnedCraft {
-	out := make([]OwnedCraft, 0, len(aircraftCatalog))
+	starterIDs := map[string]bool{
+		"A320":     true,
+		"B737-800": true,
+		"E190":     true,
+	}
+	out := make([]OwnedCraft, 0, len(starterIDs))
 	for _, ac := range aircraftCatalog {
+		if !starterIDs[ac.ID] {
+			continue
+		}
 		out = append(out, OwnedCraft{
 			ID:            ac.ID + "-1",
 			TemplateID:    ac.ID,
 			Name:          ac.Name,
+			Role:          ac.Role,
 			RangeKm:       ac.RangeKm,
 			Seats:         ac.Seats,
 			CruiseKmh:     ac.CruiseKmh,
 			FuelCost:      ac.FuelCost,
 			TurnaroundMin: ac.TurnaroundMin,
+			Crew:          ac.Crew,
+			CargoVolumeM3: ac.CargoVolumeM3,
+			MaxPayloadKg:  ac.MaxPayloadKg,
 			Status:        "active",
 			AvailableIn:   0,
 			Utilization:   0,
@@ -142,15 +217,30 @@ var (
 	airportsByIdent map[string]Airport
 	stateMu         sync.Mutex
 	state           GameState
-	aircraftCatalog = []Aircraft{
-		{ID: "A320", Name: "Airbus A320", RangeKm: 6100, Seats: 180, CruiseKmh: 830, FuelCost: 4.2, TurnaroundMin: 45},
-		{ID: "B738", Name: "Boeing 737-800", RangeKm: 5765, Seats: 175, CruiseKmh: 840, FuelCost: 4.0, TurnaroundMin: 45},
-		{ID: "E190", Name: "Embraer E190", RangeKm: 4500, Seats: 100, CruiseKmh: 820, FuelCost: 2.8, TurnaroundMin: 35},
-	}
+	aircraftCatalog []Aircraft
 	runwayReqMeters = map[string]int{
-		"A320": 1800,
-		"B738": 1800,
-		"E190": 1400,
+		"ATR72":      1300,
+		"CRJ9":       1500,
+		"E175":       1600,
+		"E190":       1600,
+		"E195E2":     1700,
+		"B737-700":   1800,
+		"B737-800":   1800,
+		"B737MAX8":   1800,
+		"A320":       1800,
+		"A320NEO":    1800,
+		"A321NEO":    2000,
+		"B767-300ER": 2600,
+		"B777-300ER": 3000,
+		"B787-9":     2800,
+		"A330-900":   2900,
+		"A350-900":   3000,
+		"B767-300F":  2600,
+		"B777F":      3000,
+		"A330-200F":  2900,
+		"B747-8F":    3200,
+		"B747-400":   3100,
+		"A380-800":   3500,
 	}
 	curfewAppliesTo = map[string]bool{
 		"large_airport":  true,
@@ -160,6 +250,10 @@ var (
 
 func main() {
 	var err error
+	aircraftCatalog, err = loadAircraftDatabase("data/aircraft.json")
+	if err != nil {
+		log.Fatalf("failed to load aircraft: %v", err)
+	}
 	store, err = loadAirports("data/airports.csv")
 	if err != nil {
 		log.Fatalf("failed to load airports: %v", err)
@@ -203,6 +297,13 @@ func main() {
 			return
 		}
 		if err := json.NewEncoder(w).Encode(filtered); err != nil {
+			http.Error(w, "failed to encode", http.StatusInternalServerError)
+		}
+	})
+
+	r.Get("/aircraft/templates", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(aircraftCatalog); err != nil {
 			http.Error(w, "failed to encode", http.StatusInternalServerError)
 		}
 	})
@@ -346,11 +447,15 @@ func main() {
 			ID:            ac.ID + "-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 			TemplateID:    ac.ID,
 			Name:          ac.Name,
+			Role:          ac.Role,
 			RangeKm:       ac.RangeKm,
 			Seats:         ac.Seats,
 			CruiseKmh:     ac.CruiseKmh,
 			FuelCost:      ac.FuelCost,
 			TurnaroundMin: ac.TurnaroundMin,
+			Crew:          ac.Crew,
+			CargoVolumeM3: ac.CargoVolumeM3,
+			MaxPayloadKg:  ac.MaxPayloadKg,
 			Status:        "delivering",
 			AvailableIn:   lead,
 			Utilization:   0,
@@ -384,6 +489,18 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func loadAircraftDatabase(path string) ([]Aircraft, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var aircraft []Aircraft
+	if err := json.Unmarshal(data, &aircraft); err != nil {
+		return nil, err
+	}
+	return aircraft, nil
 }
 
 func loadAirports(path string) (*AirportStore, error) {

@@ -364,8 +364,46 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   int _freqPerDay = 1;
   bool _busy = false;
   String? _error;
-  final Map<String, double> _prices = const {'A320': 98_000_000, 'B738': 96_000_000, 'E190': 52_000_000};
-  final Map<String, int> _lead = const {'A320': 8, 'B738': 8, 'E190': 6};
+  final Map<String, double> _prices = const {
+    'ATR72': 26_000_000,
+    'CRJ9': 44_000_000,
+    'E175': 48_000_000,
+    'E190': 52_000_000,
+    'E195E2': 60_000_000,
+    'B737-700': 82_000_000,
+    'B737-800': 96_000_000,
+    'B737MAX8': 120_000_000,
+    'A320': 98_000_000,
+    'A320NEO': 110_000_000,
+    'A321NEO': 125_000_000,
+    'B767-300ER': 220_000_000,
+    'B777-300ER': 375_000_000,
+    'B787-9': 292_000_000,
+    'A330-900': 296_000_000,
+    'A350-900': 317_000_000,
+    'B747-400': 250_000_000,
+    'A380-800': 445_000_000,
+  };
+  final Map<String, int> _lead = const {
+    'ATR72': 5,
+    'CRJ9': 6,
+    'E175': 6,
+    'E190': 6,
+    'E195E2': 7,
+    'B737-700': 7,
+    'B737-800': 8,
+    'B737MAX8': 8,
+    'A320': 8,
+    'A320NEO': 8,
+    'A321NEO': 9,
+    'B767-300ER': 10,
+    'B777-300ER': 11,
+    'B787-9': 10,
+    'A330-900': 10,
+    'A350-900': 11,
+    'B747-400': 12,
+    'A380-800': 12,
+  };
   bool _oneWay = false;
   String _activePanel = ''; // '', 'routes', 'fleet'
   bool _running = false;
@@ -373,6 +411,9 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   bool _pickingFrom = false;
   bool _pickingTo = false;
   List<Airport> _airportList = const [];
+  List<AircraftTemplate> _templates = const [];
+  bool _loadingTemplates = false;
+  String? _templatesError;
   void _notifySelection() {
     final msg = {
       'type': 'set_selection',
@@ -404,6 +445,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     ui_web.platformViewRegistry.registerViewFactory(_viewId, (int _) => _iframe);
 
     _loadAirportsList();
+    _loadAircraftTemplates();
 
     html.window.onMessage.listen((event) {
       final data = event.data;
@@ -630,6 +672,14 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   }
 
   Widget _bottomBar() {
+    final buttons = _templates
+        .map(
+          (tpl) => Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: _buyButton(tpl),
+          ),
+        )
+        .toList();
     return Material(
       color: Colors.black.withOpacity(0.75),
       borderRadius: BorderRadius.circular(12),
@@ -640,12 +690,26 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
             _bottomChip('Routes', Icons.add, 'routes'),
             const SizedBox(width: 8),
             _bottomChip('Fleet', Icons.flight_takeoff, 'fleet'),
-            const Spacer(),
-            _buyButton('A320'),
-            const SizedBox(width: 8),
-            _buyButton('B738'),
-            const SizedBox(width: 8),
-            _buyButton('E190'),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _templates.isEmpty
+                  ? Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        _templatesError ??
+                            (_loadingTemplates ? 'Loading aircraft…' : 'No aircraft available'),
+                        style: const TextStyle(color: Colors.white70),
+                      ),
+                    )
+                  : SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      reverse: true,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: buttons,
+                      ),
+                    ),
+            ),
           ],
         ),
       ),
@@ -858,6 +922,34 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     }
   }
 
+  Future<void> _loadAircraftTemplates() async {
+    setState(() {
+      _loadingTemplates = true;
+      _templatesError = null;
+    });
+    try {
+      final resp = await http.get(Uri.parse('http://localhost:4000/aircraft/templates'));
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body) as List<dynamic>;
+        final list = data.map((e) => AircraftTemplate.fromJson(e as Map<String, dynamic>)).toList();
+        setState(() {
+          _templates = list;
+          if (list.isNotEmpty && !list.any((t) => t.id == _aircraftId)) {
+            _aircraftId = list.first.id;
+          }
+        });
+      } else {
+        setState(() => _templatesError = 'Failed to load aircraft (${resp.statusCode})');
+      }
+    } catch (e) {
+      setState(() => _templatesError = 'Failed to load aircraft: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _loadingTemplates = false);
+      }
+    }
+  }
+
   Future<void> _buy(String templateId) async {
     setState(() {
       _busy = true;
@@ -948,7 +1040,8 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       if (mounted) setState(() => _busy = false);
     }
   }
-  Widget _buyButton(String id) {
+  Widget _buyButton(AircraftTemplate template) {
+    final id = template.id;
     final price = _prices[id];
     final lead = _lead[id];
     final label = price != null ? '\$${price ~/ 1_000_000}M' : '';
@@ -1074,15 +1167,29 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
           children: [
             Expanded(
               child: DropdownButtonFormField<String>(
-                value: _aircraftId,
+                value: _templates.any((t) => t.id == _aircraftId)
+                    ? _aircraftId
+                    : (_templates.isNotEmpty ? _templates.first.id : null),
                 dropdownColor: Colors.black87,
                 decoration: _inputDecoration('Aircraft', null),
-                items: const [
-                  DropdownMenuItem(value: 'A320', child: Text('A320', style: TextStyle(color: Colors.white))),
-                  DropdownMenuItem(value: 'B738', child: Text('B737-800', style: TextStyle(color: Colors.white))),
-                  DropdownMenuItem(value: 'E190', child: Text('E190', style: TextStyle(color: Colors.white))),
-                ],
-                onChanged: (v) => setState(() => _aircraftId = v ?? 'A320'),
+                items: _templates
+                    .map(
+                      (tpl) => DropdownMenuItem(
+                        value: tpl.id,
+                        child: Text(
+                          '${tpl.name} (${tpl.seats} seats)',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    )
+                    .toList(),
+                hint: const Text('Select aircraft', style: TextStyle(color: Colors.white)),
+                onChanged: _templates.isEmpty
+                    ? null
+                    : (v) {
+                        if (v == null) return;
+                        setState(() => _aircraftId = v);
+                      },
               ),
             ),
             const SizedBox(width: 12),
@@ -1489,6 +1596,38 @@ class OwnedCraft {
       status: json['status']?.toString() ?? '',
       availableIn: json['available_in_ticks'] ?? 0,
       util: (json['utilization_pct'] ?? 0).toDouble(),
+    );
+  }
+}
+
+class AircraftTemplate {
+  AircraftTemplate({
+    required this.id,
+    required this.name,
+    required this.rangeKm,
+    required this.seats,
+    required this.cruiseKmh,
+    required this.fuelCostPerKm,
+    required this.turnaroundMin,
+  });
+
+  final String id;
+  final String name;
+  final double rangeKm;
+  final int seats;
+  final double cruiseKmh;
+  final double fuelCostPerKm;
+  final int turnaroundMin;
+
+  factory AircraftTemplate.fromJson(Map<String, dynamic> json) {
+    return AircraftTemplate(
+      id: json['id']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
+      rangeKm: (json['range_km'] ?? 0).toDouble(),
+      seats: json['seats'] ?? 0,
+      cruiseKmh: (json['cruise_kmh'] ?? 0).toDouble(),
+      fuelCostPerKm: (json['fuel_cost_per_km'] ?? 0).toDouble(),
+      turnaroundMin: json['turnaround_min'] ?? 0,
     );
   }
 }

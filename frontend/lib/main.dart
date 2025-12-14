@@ -370,6 +370,8 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   String _activePanel = ''; // '', 'routes', 'fleet'
   bool _running = false;
   int _simSpeed = 1;
+  bool _pickingFrom = false;
+  bool _pickingTo = false;
 
   @override
   void initState() {
@@ -391,6 +393,25 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     });
     // ignore: undefined_prefixed_name
     ui_web.platformViewRegistry.registerViewFactory(_viewId, (int _) => _iframe);
+
+    html.window.onMessage.listen((event) {
+      final data = event.data;
+      if (data is Map && data['type'] == 'airport_select') {
+        final ident = (data['ident'] ?? '').toString();
+        if (ident.isEmpty) return;
+        if (_pickingFrom) {
+          setState(() {
+            _fromCtrl.text = ident;
+            _pickingFrom = false;
+          });
+        } else if (_pickingTo) {
+          setState(() {
+            _toCtrl.text = ident;
+            _pickingTo = false;
+          });
+        }
+      }
+    });
   }
 
   @override
@@ -597,7 +618,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           children: [
-            _bottomChip('Routes', Icons.route, 'routes'),
+            _bottomChip('Routes', Icons.add, 'routes'),
             const SizedBox(width: 8),
             _bottomChip('Fleet', Icons.flight_takeoff, 'fleet'),
             const Spacer(),
@@ -639,12 +660,12 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     final height = isRoutes ? 200.0 : 150.0;
     final width = 360.0;
     return Align(
-      alignment: Alignment.bottomCenter,
+      alignment: Alignment.bottomLeft,
       child: Material(
         color: Colors.black.withOpacity(0.85),
         borderRadius: BorderRadius.circular(14),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: height, maxWidth: width),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: height, maxWidth: width),
         child: Padding(
             padding: const EdgeInsets.all(10),
             child: SingleChildScrollView(
@@ -1057,6 +1078,37 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                   ),
                 ],
               ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            TextButton(
+              onPressed: () => setState(() {
+                _pickingFrom = true;
+                _pickingTo = false;
+              }),
+              child: Text(_pickingFrom ? 'Picking From… (click map)' : 'Pick From'),
+            ),
+            const SizedBox(width: 6),
+            TextButton(
+              onPressed: () => setState(() {
+                _pickingTo = true;
+                _pickingFrom = false;
+              }),
+              child: Text(_pickingTo ? 'Picking To… (click map)' : 'Pick To'),
+            ),
+            const Spacer(),
+            IconButton(
+              icon: const Icon(Icons.swap_horiz, color: Colors.white70),
+              onPressed: () {
+                final tmp = _fromCtrl.text;
+                setState(() {
+                  _fromCtrl.text = _toCtrl.text;
+                  _toCtrl.text = tmp;
+                });
+              },
             ),
           ],
         ),

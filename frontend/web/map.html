@@ -252,7 +252,15 @@
 
             map.on('click', 'unclustered-airports', (e) => {
               if (!e.features || !e.features.length) return;
-              showAirportPopup(e.features[0]);
+              const f = e.features[0];
+              showAirportPopup(f);
+              try {
+                if (window.parent) {
+                  window.parent.postMessage({ type: 'airport_select', ident: f.properties.ident || f.properties.iata || f.properties.icao || '' }, '*');
+                }
+              } catch (err) {
+                console.error('postMessage failed', err);
+              }
             });
 
             map.on('click', 'clusters', (e) => {

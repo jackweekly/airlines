@@ -746,14 +746,6 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   }
 
   Widget _bottomBar() {
-    final buttons = _templates
-        .map(
-          (tpl) => Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: _buyButton(tpl),
-          ),
-        )
-        .toList();
     return Material(
       color: Colors.black.withOpacity(0.75),
       borderRadius: BorderRadius.circular(12),
@@ -764,28 +756,6 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
             _bottomChip('Routes', Icons.add, 'routes'),
             const SizedBox(width: 8),
             _bottomChip('Fleet', Icons.flight_takeoff, 'fleet'),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _templates.isEmpty
-                  ? Align(
-                      alignment: Alignment.centerRight,
-                      child: Text(
-                        _templatesError ??
-                            (_loadingTemplates
-                                ? 'Loading aircraft…'
-                                : 'No aircraft available'),
-                        style: const TextStyle(color: Colors.white70),
-                      ),
-                    )
-                  : SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      reverse: true,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: buttons,
-                      ),
-                    ),
-            ),
           ],
         ),
       ),
@@ -820,7 +790,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
 
   Widget _floatingPanel() {
     final isRoutes = _activePanel == 'routes';
-    final height = isRoutes ? 200.0 : 150.0;
+    final height = isRoutes ? 200.0 : 210.0;
     final width = 360.0;
     return Align(
       alignment: Alignment.bottomLeft,
@@ -888,6 +858,26 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                     ),
                   ] else ...[
                     _sectionTitle('Fleet'),
+                    const SizedBox(height: 4),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _templates.isEmpty
+                            ? null
+                            : _openCatalogDialog,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.tealAccent,
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        icon: const Icon(Icons.add),
+                        label: const Text('Purchase aircraft'),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     SizedBox(
                       height: 90,
                       child: _fleet.isEmpty
@@ -1169,66 +1159,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     }
   }
 
-  Widget _buyButton(AircraftTemplate template) {
-    final id = template.id;
-    final price = _prices[id]?.toDouble();
-    final lead = _lead[id];
-    final buyLabel = price != null ? 'Buy ${_formatMillions(price)}' : 'Buy';
-    final leaseDown = price != null ? price * 0.02 : null;
-    final leaseMonthly = price != null ? price * 0.01 : null;
-    final leaseLabel = (leaseDown != null && leaseMonthly != null)
-        ? 'Lease ${_formatMillions(leaseDown)} down + ${_formatMillions(leaseMonthly)}/tick'
-        : 'Lease';
-    final leadTxt = lead != null ? 'Lead ${lead}t' : '';
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '${template.name} (${template.seats} seats) $leadTxt',
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: _busy ? null : () => _buy(id, PurchaseMode.buy),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.tealAccent,
-                    foregroundColor: Colors.black,
-                  ),
-                  child: Text(buyLabel),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _busy ? null : () => _buy(id, PurchaseMode.lease),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Colors.white24),
-                  ),
-                  child: Text(leaseLabel, textAlign: TextAlign.center),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _buyButton(AircraftTemplate template) => const SizedBox.shrink();
 
   Widget _panelHeader() {
     return Row(
@@ -2024,6 +1955,151 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               'Lease ${_formatMillions(f.monthlyCost)}/tick',
               style: const TextStyle(color: Colors.white70, fontSize: 11),
             ),
+        ],
+      ),
+    );
+  }
+
+  void _openCatalogDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          backgroundColor: Colors.black87,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 500, maxWidth: 480),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  decoration: const BoxDecoration(
+                    border: Border(bottom: BorderSide(color: Colors.white12)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Aircraft catalog',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white70),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ],
+                  ),
+                ),
+                if (_templates.isEmpty)
+                  Expanded(
+                    child: Center(
+                      child: Text(
+                        _templatesError ??
+                            (_loadingTemplates
+                                ? 'Loading…'
+                                : 'No aircraft available'),
+                        style: const TextStyle(color: Colors.white70),
+                      ),
+                    ),
+                  )
+                else
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: _templates.length,
+                      itemBuilder: (context, index) =>
+                          _catalogCard(_templates[index]),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _catalogCard(AircraftTemplate tpl) {
+    final price = _prices[tpl.id]?.toDouble();
+    final range = '${tpl.rangeKm.toStringAsFixed(0)} km';
+    final cruise = '${tpl.cruiseKmh.toStringAsFixed(0)} km/h';
+    final fuel = '\$${tpl.fuelCostPerKm.toStringAsFixed(2)}/km';
+    final buyLabel = price != null ? 'Buy ${_formatMillions(price)}' : 'Buy';
+    final leaseDown = price != null ? price * 0.02 : null;
+    final leaseMo = price != null ? price * 0.01 : null;
+    final leaseLabel = (leaseDown != null && leaseMo != null)
+        ? 'Lease ${_formatMillions(leaseDown)} down + ${_formatMillions(leaseMo)}/tick'
+        : 'Lease';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${tpl.name} • ${tpl.seats} seats',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Range $range • Cruise $cruise • Fuel $fuel',
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _busy
+                      ? null
+                      : () {
+                          Navigator.of(context).pop();
+                          _buy(tpl.id, PurchaseMode.buy);
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.tealAccent,
+                    foregroundColor: Colors.black,
+                  ),
+                  child: Text(buyLabel),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _busy
+                      ? null
+                      : () {
+                          Navigator.of(context).pop();
+                          _buy(tpl.id, PurchaseMode.lease);
+                        },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white24),
+                  ),
+                  child: Text(leaseLabel, textAlign: TextAlign.center),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

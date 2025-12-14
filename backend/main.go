@@ -109,25 +109,35 @@ type GameState struct {
 
 // OwnedCraft represents a specific aircraft in the player's fleet
 // (not just the catalog entry).
+type FlightPlan struct {
+	Origin     string `json:"origin"`
+	Dest       string `json:"dest"`
+	Passengers int    `json:"passengers"`
+}
+
+// OwnedCraft represents a specific aircraft in the player's fleet
+// (not just the catalog entry).
 type OwnedCraft struct {
-	ID            string  `json:"id"`
-	TemplateID    string  `json:"template_id"`
-	Name          string  `json:"name"`
-	Role          string  `json:"role"`
-	RangeKm       float64 `json:"range_km"`
-	Seats         int     `json:"seats"`
-	CruiseKmh     float64 `json:"cruise_kmh"`
-	FuelCost      float64 `json:"fuel_cost_per_km"`
-	TurnaroundMin int     `json:"turnaround_min"`
-	Crew          int     `json:"crew,omitempty"`
-	CargoVolumeM3 float64 `json:"cargo_volume_m3,omitempty"`
-	MaxPayloadKg  float64 `json:"max_payload_kg,omitempty"`
-	Status        string  `json:"status"` // active, delivering, maintenance
-	AvailableIn   int     `json:"available_in_ticks"`
-	Utilization   float64 `json:"utilization_pct"`
-	Condition     float64 `json:"condition_pct"`
-	OwnershipType string  `json:"ownership_type,omitempty"` // owned, leased
-	MonthlyCost   float64 `json:"monthly_cost,omitempty"`
+	ID            string     `json:"id"`
+	TemplateID    string     `json:"template_id"`
+	Name          string     `json:"name"`
+	RangeKm       float64    `json:"range_km"`
+	Seats         int        `json:"seats"`
+	CruiseKmh     float64    `json:"cruise_kmh"`
+	FuelCost      float64    `json:"fuel_cost_per_km"`
+	Turnaround    int        `json:"turnaround_min"`
+	Status        string     `json:"status"` // "active", "maintenance", "delivering"
+	AvailableIn   int        `json:"available_in_ticks"`
+	Utilization   float64    `json:"utilization_pct"`
+	Condition     float64    `json:"condition_pct"`
+	OwnershipType string     `json:"ownership_type,omitempty"`
+	MonthlyCost   float64    `json:"monthly_cost,omitempty"`
+
+	// Simulation State
+	State      string     `json:"state"` // "Idle", "Flying", "Turnaround"
+	Location   string     `json:"location"`
+	Timer      int        `json:"timer"` // minutes remaining
+	FlightPlan FlightPlan `json:"flight_plan"`
 }
 
 // acquisition configuration
@@ -559,30 +569,195 @@ func main() {
 		json.NewEncoder(w).Encode(craft)
 	})
 
-	addr := ":" + getPort()
-	log.Println("backend listening on", addr)
-	log.Fatal(http.ListenAndServe(addr, r))
+	port := getPort()
+	r.Post("/analysis/route", handleRouteAnalysis)
+
+	log.Printf("Server listening on port %s", port)
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }
 
 func getPort() string {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "4000"
+	if p := os.Getenv("PORT"); p != "" {
+		return p
 	}
-	return port
+	return "4000"
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS, POST")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+type RouteAnalysisRequest struct {
+	Origin        string   `json:"origin"`
+	Dest          string   `json:"dest"`
+	Via           string   `json:"via"`
+	AircraftTypes []string `json:"aircraft_types"`
+}
+
+type RouteAnalysisResult struct {
+	AircraftType string  `json:"aircraft_type"`
+	Frequency    float64 `json:"frequency"`
+	LoadFactor   float64 `json:"load_factor"`
+	DailyProfit  float64 `json:"daily_profit"`
+	RoiScore     float64 `json:"roi_score"`
+	Valid        bool    `json:"valid"`
+	Error        string  `json:"error,omitempty"`
+}
+
+func handleRouteAnalysis(w http.ResponseWriter, r *http.Request) {
+	var req RouteAnalysisRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	fromAp, ok1 := airportsByIdent[strings.ToUpper(req.Origin)]
+	toAp, ok2 := airportsByIdent[strings.ToUpper(req.Dest)]
+	if !ok1 || !ok2 {
+		http.Error(w, "Invalid airports", http.StatusBadRequest)
+		return
+	}
+
+	var viaAp Airport
+	hasVia := req.Via != ""
+	if hasVia {
+		viaAp, ok1 = airportsByIdent[strings.ToUpper(req.Via)]
+		if !ok1 {
+			http.Error(w, "Invalid via airport", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Calculate base distance (Great Circle for Direct)
+	distDirect := haversine(fromAp.Latitude, fromAp.Longitude, toAp.Latitude, toAp.Longitude)
+	
+	// Calculate actual distance (if via)
+	distLeg1 := distDirect
+	distLeg2 := 0.0
+	if hasVia {
+		distLeg1 = haversine(fromAp.Latitude, fromAp.Longitude, viaAp.Latitude, viaAp.Longitude)
+		distLeg2 = haversine(viaAp.Latitude, viaAp.Longitude, toAp.Latitude, toAp.Longitude)
+	}
+	totalDist := distLeg1 + distLeg2
+
+	results := []RouteAnalysisResult{}
+
+	// Benchmark time for direct flight (Assumed 850 km/h)
+	benchmarkSpeed := 850.0
+	directTimeHours := distDirect / benchmarkSpeed
+
+	for _, typeID := range req.AircraftTypes {
+		ac, err := findAircraft(typeID)
+		if err != nil {
+			results = append(results, RouteAnalysisResult{AircraftType: typeID, Valid: false, Error: "Unknown Type"})
+			continue
+		}
+
+		// Range Check
+		if distLeg1 > ac.RangeKm || distLeg2 > ac.RangeKm {
+			results = append(results, RouteAnalysisResult{AircraftType: typeID, Valid: false, Error: "Range Exceeded"})
+			continue
+		}
+
+		// Calculate Flight Times
+		// Using conservative block speed: Cruise * 0.9 for taxi/climb/descend inefficiency
+		blockSpeed := ac.CruiseKmh * 0.9 
+		if blockSpeed <= 0 { blockSpeed = 100 }
+		
+		flightTimeHours := totalDist / blockSpeed
+		
+		// If Via, add stopover time (e.g. Turnaround time) to flight time perception?
+		// "Total Time vs Direct Flight". 
+		// If Via, Total Time = Flight Leg 1 + Turnaround + Flight Leg 2
+		totalTravelTime := flightTimeHours
+		if hasVia {
+			totalTravelTime += float64(ac.TurnaroundMin) / 60.0
+		}
+
+		// Penalty: -10% per extra hour compared to direct
+		extraHours := totalTravelTime - directTimeHours
+		if extraHours < 0 { extraHours = 0 }
+		penalty := extraHours * 0.10
+		demandFactor := 1.0 - penalty
+		if demandFactor < 0.1 { demandFactor = 0.1 }
+
+		// Est Demand (Base)
+		// We use our existing simple demand estimator
+		baseDemand := float64(demandEstimate(fromAp, toAp, ac, 1))
+		// Apply market share penalty
+		adjustedDemand := baseDemand * demandFactor
+
+		// Frequency Calculation
+		// Round Trip Time = (TotalTravelTime * 2) + (Turnaround * 2) ?? 
+		// Assuming A->B (TravelTime) + Turnaround + B->A (TravelTime) + Turnaround
+		// Note from User: "Max Frequency: 24h / (RoundTripTime + TurnaroundTime)"
+		// If RoundTripTime includes flight times.
+		// Let's explicitly sum it up:
+		oneWayBlock := totalTravelTime*60 + float64(ac.TurnaroundMin)
+		roundTripTimeMins := oneWayBlock * 2 
+		
+		maxFreq := (24 * 60) / roundTripTimeMins
+		if maxFreq < 1 { maxFreq = 1 } // At least 1 if we force it? Or maybe fractional (every 2 days). 
+		// Let's floor it or keep it reliable.
+		freq := math.Floor(maxFreq)
+		if freq < 1 { freq = 1 }
+
+		// Financials
+		// Revenue
+		// Load limited by seats
+		load := adjustedDemand
+		if load > float64(ac.Seats) { load = float64(ac.Seats) }
+		loadFactor := load / float64(ac.Seats)
+
+		// Price (Standard formula: 0.13 * dist + base)
+		price := 0.13 * totalDist
+		if price < 50 { price = 50 }
+		
+		revenuePerFlight := load * price
+		
+		// Cost
+		// Fuel = Dist * Cost/km
+		fuelCost := totalDist * ac.FuelCost
+		// Fixed Costs per flight + Landing Fees
+		landingFees := toAp.LandingFee
+		if hasVia { landingFees += viaAp.LandingFee }
+		
+		crewCost := 1000.0 // Estimation
+		costPerFlight := fuelCost + landingFees + crewCost
+
+		profitPerFlight := revenuePerFlight - costPerFlight
+		dailyProfit := profitPerFlight * freq
+
+		// ROI Score = Daily Profit / Price of Plane (approx) -- or just use profit for sorting
+		// User asked for "Highest ROI". We don't have plane price here easily without looking it up or simulating.
+		// Let's assume ROI ~ Daily Profit for now, or fetch price.
+		// We have `aircraftCosts` in main.go
+		costToBuy, _ := aircraftCosts[ac.ID]
+		if costToBuy == 0 { costToBuy = 50_000_000 } // Default fallback
+		
+		roi := (dailyProfit * 365) / costToBuy * 100 // Annualized ROI %
+
+		results = append(results, RouteAnalysisResult{
+			AircraftType: ac.ID,
+			Frequency:    freq,
+			LoadFactor:   loadFactor * 100,
+			DailyProfit:  dailyProfit,
+			RoiScore:     roi,
+			Valid:        true,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
 }
 
 func loadAircraftDatabase(path string) ([]Aircraft, error) {
@@ -1296,54 +1471,139 @@ func recalcUtilizationLocked() {
 }
 
 func advanceTickLocked() {
+	// 1 tick = 1 minute of "simulation time" for timers
+	
 	totalRevenue := 0.0
 	totalCost := 0.0
-	for i := range state.Routes {
-		rt := &state.Routes[i]
-		ac, err := findAircraft(rt.AircraftID)
-		if err != nil {
+
+	// Helper to find route for aircraft
+	findRouteForAc := func(acID string) *Route {
+		for i := range state.Routes {
+			if state.Routes[i].AircraftID == acID {
+				return &state.Routes[i]
+			}
+		}
+		return nil
+	}
+
+	for i := range state.Fleet {
+		ac := &state.Fleet[i]
+
+		// Only process active aircraft
+		if ac.Status != "active" {
 			continue
 		}
-		routeCost := rt.EstCostTick
-		totalCost += routeCost
 
-		randomFactor := 0.85 + rng.Float64()*0.3
-		capacity := float64(ac.Seats * maxInt(1, rt.FrequencyPerDay))
-		if capacity <= 0 {
-			capacity = float64(ac.Seats)
-		}
-		demand := float64(rt.EstimatedDemand) * randomFactor
-		price := rt.UserPrice
-		if price <= 0 {
-			price = rt.PricePerSeat
-		}
-		if price <= 0 {
-			price = 0.13 * 1000
-		}
-		actualSold := math.Min(capacity, demand)
-		actualRevenue := 0.0
-		actualLoad := 0.0
-		if capacity > 0 {
-			actualLoad = actualSold / capacity
+		if ac.State == "" {
+			ac.State = "Idle"
 		}
 
-		if maxTemplateUtilization(rt.AircraftID) > 100 && rng.Float64() < 0.2 {
-			actualRevenue = 0
-			actualLoad = 0
-		} else {
-			actualRevenue = actualSold * price
+		// State Machine
+		switch ac.State {
+		case "Flying":
+			ac.Timer--
+			if ac.Timer <= 0 {
+				// Arrived
+				ac.Location = ac.FlightPlan.Dest
+				ac.State = "Turnaround"
+				ac.Timer = ac.Turnaround
+			}
+
+		case "Turnaround":
+			ac.Timer--
+			if ac.Timer <= 0 {
+				// Turnaround complete, ready to fly next leg
+				rt := findRouteForAc(ac.ID)
+				if rt == nil {
+					ac.State = "Idle"
+					continue
+				}
+
+				// Determine Destination
+				var origin, dest string
+				if ac.Location == "" {
+					ac.Location = rt.From
+				}
+
+				if ac.Location == rt.From {
+					origin = rt.From
+					dest = rt.To
+					if rt.Via != "" {
+						dest = rt.Via
+					}
+				} else if ac.Location == rt.To {
+					origin = rt.To
+					dest = rt.From
+					if rt.Via != "" {
+						dest = rt.Via
+					}
+				} else if ac.Location == rt.Via {
+					if ac.FlightPlan.Origin == rt.From {
+						origin = rt.Via
+						dest = rt.To
+					} else {
+						origin = rt.Via
+						dest = rt.From
+					}
+				} else {
+					// Mismatch fallback
+					ac.Location = rt.From
+					origin = rt.From
+					dest = rt.To
+					if rt.Via != "" {
+						dest = rt.Via
+					}
+				}
+
+				// Start Flight
+				ac.FlightPlan.Origin = origin
+				ac.FlightPlan.Dest = dest
+				
+				fromAp := airportsByIdent[origin]
+				toAp := airportsByIdent[dest]
+				dist := haversine(fromAp.Latitude, fromAp.Longitude, toAp.Latitude, toAp.Longitude)
+				
+				flightMins := int((dist / ac.CruiseKmh) * 60)
+				if flightMins < 10 {
+					flightMins = 10
+				}
+
+				ac.State = "Flying"
+				ac.Timer = flightMins
+
+				// Revenue Logic
+				randomLoad := rt.LoadFactor * (0.9 + rng.Float64()*0.2)
+				if randomLoad > 1.0 { randomLoad = 1.0 }
+				passengers := int(float64(ac.Seats) * randomLoad)
+				ac.FlightPlan.Passengers = passengers
+
+				numLegs := 1
+				if rt.Via != "" { numLegs = 2 }
+				legPrice := rt.UserPrice / float64(numLegs)
+				
+				revenue := float64(passengers) * legPrice
+				cost := (dist * ac.FuelCost) + 500 + toAp.LandingFee
+
+				totalRevenue += revenue
+				totalCost += cost
+				
+				rt.LastTickRevenue = revenue
+				rt.LastTickLoad = float64(passengers) / float64(ac.Seats)
+				rt.ProfitPerTick = revenue - cost
+			}
+
+		case "Idle":
+			rt := findRouteForAc(ac.ID)
+			if rt != nil {
+				if ac.Location == "" {
+					ac.Location = rt.From
+				}
+				ac.State = "Turnaround"
+				ac.Timer = ac.Turnaround
+			}
 		}
-
-		rt.LastTickRevenue = actualRevenue
-		rt.LastTickLoad = actualLoad
-		rt.LoadFactor = actualLoad
-		rt.PricePerSeat = price
-		rt.UserPrice = price
-		rt.EstRevenueTick = actualRevenue
-		rt.ProfitPerTick = actualRevenue - routeCost
-
-		totalRevenue += actualRevenue
 	}
+
 	leaseCost := 0.0
 	for _, ac := range state.Fleet {
 		if strings.EqualFold(ac.OwnershipType, "leased") && ac.MonthlyCost > 0 {
@@ -1351,10 +1611,11 @@ func advanceTickLocked() {
 		}
 	}
 	state.Cash += totalRevenue - totalCost - leaseCost
+	
 	advanceFleetTimersLocked()
 	applyMaintenanceWearLocked()
 	state.Tick++
-	if state.Tick%6 == 0 { // periodically decay utilization so it re-calculates with routes
+	if state.Tick%6 == 0 { 
 		recalcUtilizationLocked()
 	}
 	if err := saveState(saveFilePath, &state); err != nil {

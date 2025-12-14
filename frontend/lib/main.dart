@@ -788,10 +788,16 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     );
   }
 
+  bool _showAnalysis = false;
+  List<RouteAnalysisResult> _analysisResults = [];
+  bool _analyzing = false;
+
   Widget _floatingPanel() {
     final isRoutes = _activePanel == 'routes';
+    // Use full height for analysis view too
     final height = MediaQuery.of(context).size.height * 0.6;
     final width = 450.0;
+    
     return Align(
       alignment: Alignment.bottomLeft,
       child: Material(
@@ -807,54 +813,74 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    isRoutes ? 'Routes' : 'My Fleet',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 20,
-                    ),
+                   Row(
+                    children: [
+                      if (_showAnalysis)
+                        IconButton(
+                          icon: const Icon(Icons.arrow_back, color: Colors.white),
+                          onPressed: () => setState(() => _showAnalysis = false),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                      if (_showAnalysis) const SizedBox(width: 8),
+                      Text(
+                        _showAnalysis
+                            ? 'Strategy Analyzer'
+                            : (isRoutes ? 'Routes' : 'My Fleet'),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 20,
+                        ),
+                      ),
+                    ],
                   ),
                   IconButton(
                     icon: const Icon(Icons.close, color: Colors.white70),
-                    onPressed: () => setState(() => _activePanel = ''),
+                    onPressed: () => setState(() { 
+                      _activePanel = '';
+                      _showAnalysis = false;
+                    }),
                   ),
                 ],
               ),
               const SizedBox(height: 6),
               if (isRoutes) ...[
-                _routeForm(),
-                const SizedBox(height: 8),
-                _ctaRow(),
-                if (_error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      _error!,
-                      style: const TextStyle(
-                        color: Colors.redAccent,
-                        fontSize: 12,
+                if (_showAnalysis)
+                   Expanded(child: _buildAnalysisTable())
+                else ...[
+                  _routeForm(),
+                  const SizedBox(height: 8),
+                  _ctaRow(),
+                  if (_error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
-                  ),
-                const SizedBox(height: 12),
-                _sectionTitle('Active routes'),
-                const SizedBox(height: 4),
-                Expanded(
-                  child: _routes.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'No routes yet',
-                            style: TextStyle(color: Colors.white54),
+                  const SizedBox(height: 12),
+                  _sectionTitle('Active routes'),
+                  const SizedBox(height: 4),
+                  Expanded(
+                    child: _routes.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'No routes yet',
+                              style: TextStyle(color: Colors.white54),
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: _routes.length,
+                            itemBuilder: (context, i) => _routeTile(_routes[i]),
                           ),
-                        )
-                      : ListView.builder(
-                          itemCount: _routes.length,
-                          itemBuilder: (context, i) => _routeTile(_routes[i]),
-                        ),
-                ),
+                  ),
+                ],
               ] else ...[
-                // _sectionTitle('Fleet') removed as it is redundant with header
                 const SizedBox(height: 4),
                 SizedBox(
                   width: double.infinity,
@@ -893,6 +919,368 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       ),
     );
   }
+
+  Future<void> _analyzeRoute() async {
+    if (_fromCtrl.text.isEmpty || _toCtrl.text.isEmpty) {
+      setState(() => _error = 'Enter From/To airports');
+      return;
+    }
+    setState(() {
+      _analyzing = true;
+      _error = null;
+    });
+
+    try {
+      final body = json.encode({
+        'origin': _fromCtrl.text.trim(),
+        'dest': _toCtrl.text.trim(),
+        'via': _viaCtrl.text.trim(),
+        'aircraft_types': _templates.map((t) => t.id).toList(),
+      });
+      final resp = await http.post(
+        Uri.parse('http://localhost:4000/analysis/route'),
+        headers: {'Content-Type': 'application/json'},
+        body: body,
+      );
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body) as List<dynamic>;
+        setState(() {
+          _analysisResults = data
+              .map((e) => RouteAnalysisResult.fromJson(e))
+              .where((r) => r.valid)
+              .toList();
+          // Sort by ROI descending 
+          _analysisResults.sort((a, b) => b.roiScore.compareTo(a.roiScore));
+          _showAnalysis = true;
+        });
+      } else {
+         setState(() => _error = 'Analysis failed (${resp.statusCode})');
+      }
+    } catch (e) {
+      setState(() => _error = 'Analysis error: $e');
+    } finally {
+      if (mounted) setState(() => _analyzing = false);
+    }
+  }
+
+  Widget _buildAnalysisTable() {
+    if (_analyzing) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_analysisResults.isEmpty) {
+      return const Center(child: Text('No viable aircraft found', style: TextStyle(color: Colors.white54)));
+    }
+    
+    // Find highest ROI for highlighting
+    final best = _analysisResults.first; // Already sorted
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8.0),
+          child: Text(
+            'Comparing ${_fromCtrl.text} to ${_toCtrl.text}${_viaCtrl.text.isNotEmpty ? " via ${_viaCtrl.text}" : ""}',
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+        ),
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.vertical,
+            child: DataTable(
+              headingRowColor: MaterialStateProperty.all(Colors.white10),
+              dataRowColor: MaterialStateProperty.all(Colors.transparent),
+              columnSpacing: 10,
+              columns: const [
+                DataColumn(label: Text('Aircraft', style: TextStyle(color: Colors.white70, fontSize: 11))),
+                DataColumn(label: Text('Freq', style: TextStyle(color: Colors.white70, fontSize: 11))),
+                DataColumn(label: Text('Load', style: TextStyle(color: Colors.white70, fontSize: 11))),
+                DataColumn(label: Text('Profit/Day', style: TextStyle(color: Colors.white70, fontSize: 11))),
+              ],
+              rows: _analysisResults.map((r) {
+                 final isBest = r == best && r.dailyProfit > 0;
+                 return DataRow(
+                   color: isBest ? MaterialStateProperty.all(Colors.green.withOpacity(0.2)) : null,
+                   cells: [
+                     DataCell(Text(r.aircraftType, style: const TextStyle(color: Colors.white, fontSize: 12))),
+                     DataCell(Text('${r.frequency.toInt()}/d', style: const TextStyle(color: Colors.white, fontSize: 12))),
+                     DataCell(Text('${r.loadFactor.toStringAsFixed(0)}%', style: const TextStyle(color: Colors.white, fontSize: 12))),
+                     DataCell(Text('\$${r.dailyProfit.toStringAsFixed(0)}', style: TextStyle(
+                       color: r.dailyProfit >= 0 ? Colors.tealAccent : Colors.redAccent, 
+                       fontSize: 12, 
+                       fontWeight: isBest ? FontWeight.bold : FontWeight.normal
+                     ))),
+                   ],
+                 );
+              }).toList(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ... (previous methods) ...
+  
+  // Update _routeForm to include the button
+  Widget _routeForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ... (existing form rows) ...
+        Row(
+          children: [
+            Expanded(
+              child: _airportAutocomplete(
+                _fromCtrl,
+                'From (IATA/ICAO)',
+                RouteFieldRole.from,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _airportAutocomplete(
+                _viaCtrl,
+                'Via / Stopover (optional)',
+                RouteFieldRole.via,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _airportAutocomplete(_toCtrl, 'To', RouteFieldRole.to),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+         Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                value: _templates.any((t) => t.id == _aircraftId)
+                    ? _aircraftId
+                    : (_templates.isNotEmpty ? _templates.first.id : null),
+                dropdownColor: Colors.black87,
+                decoration: _inputDecoration('Aircraft', null),
+                items: _templates
+                    .map(
+                      (tpl) => DropdownMenuItem(
+                        value: tpl.id,
+                        child: Text(
+                          '${tpl.name} (${tpl.seats} seats)',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    )
+                    .toList(),
+                hint: const Text(
+                  'Select aircraft',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onChanged: _templates.isEmpty
+                    ? null
+                    : (v) {
+                        if (v == null) return;
+                        setState(() => _aircraftId = v);
+                      },
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Round Trips/day',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  Slider(
+                    value: _freqPerDay.toDouble(),
+                    min: 1,
+                    max: 10,
+                    divisions: 9,
+                    activeColor: Colors.tealAccent,
+                    inactiveColor: Colors.white24,
+                    label: '$_freqPerDay',
+                    onChanged: (v) => setState(() => _freqPerDay = v.toInt()),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        _ticketPricingControls(),
+        const SizedBox(height: 4),
+        Row(
+           mainAxisAlignment: MainAxisAlignment.spaceBetween,
+           children: [
+              // Picker Buttons
+               Row(
+                 children: [
+                    TextButton(
+                      onPressed: () => setState(() {
+                        _pickingFrom = true;
+                        _pickingVia = false;
+                        _pickingTo = false;
+                      }),
+                      style: TextButton.styleFrom(
+                        backgroundColor: _pickingFrom
+                            ? Colors.teal.withOpacity(0.2)
+                            : Colors.transparent,
+                        side: BorderSide(
+                          color: _pickingFrom ? Colors.tealAccent : Colors.white24,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8)
+                      ),
+                      child: Text(
+                        _pickingFrom ? 'From…' : 'From',
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    TextButton(
+                      onPressed: () => setState(() {
+                        _pickingVia = true;
+                        _pickingFrom = false;
+                        _pickingTo = false;
+                      }),
+                      style: TextButton.styleFrom(
+                        backgroundColor: _pickingVia
+                            ? Colors.teal.withOpacity(0.2)
+                            : Colors.transparent,
+                        side: BorderSide(
+                          color: _pickingVia ? Colors.tealAccent : Colors.white24,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8)
+                      ),
+                      child: Text(
+                        _pickingVia ? 'Via…' : 'Via',
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    TextButton(
+                      onPressed: () => setState(() {
+                        _pickingTo = true;
+                        _pickingFrom = false;
+                        _pickingVia = false;
+                      }),
+                      style: TextButton.styleFrom(
+                        backgroundColor: _pickingTo
+                            ? Colors.teal.withOpacity(0.2)
+                            : Colors.transparent,
+                        side: BorderSide(
+                          color: _pickingTo ? Colors.tealAccent : Colors.white24,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8)
+                      ),
+                      child: Text(
+                        _pickingTo ? 'To…' : 'To',
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                 ]
+               ),
+              // Swap + Analyze Buttons
+               Row(
+                 children: [
+                   IconButton(
+                    icon: const Icon(Icons.swap_horiz, color: Colors.white70),
+                     onPressed: () {
+                      final tmp = _fromCtrl.text;
+                      setState(() {
+                         _fromCtrl.text = _toCtrl.text;
+                         _toCtrl.text = tmp;
+                      });
+                       _notifySelection();
+                    },
+                   ),
+                   const SizedBox(width: 4),
+                   OutlinedButton.icon(
+                      onPressed: _analyzing ? null : _analyzeRoute,
+                      icon: const Icon(Icons.analytics, size: 16),
+                      label: const Text('Analyze', style: TextStyle(fontSize: 12)),
+                      style: OutlinedButton.styleFrom(
+                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                         side: const BorderSide(color: Colors.tealAccent),
+                         foregroundColor: Colors.tealAccent,
+                      ),
+                   )
+                 ]
+               )
+           ]
+        ),
+         const SizedBox(height: 4),
+        // One Way Toggle
+        GestureDetector(
+          onTap: () => setState(() => _oneWay = !_oneWay),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: _oneWay
+                  ? Colors.teal.withOpacity(0.2)
+                  : Colors.white.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: _oneWay ? Colors.tealAccent : Colors.white24,
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'One-way flight',
+                  style: TextStyle(color: Colors.white),
+                ),
+                Switch(
+                  value: _oneWay,
+                  onChanged: (v) => setState(() => _oneWay = v),
+                  activeColor: Colors.tealAccent,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+class RouteAnalysisResult {
+  final String aircraftType;
+  final double frequency;
+  final double loadFactor;
+  final double dailyProfit;
+  final double roiScore;
+  final bool valid;
+
+  RouteAnalysisResult({
+    required this.aircraftType,
+    required this.frequency,
+    required this.loadFactor,
+    required this.dailyProfit,
+    required this.roiScore,
+    required this.valid,
+  });
+
+  factory RouteAnalysisResult.fromJson(Map<String, dynamic> json) {
+    return RouteAnalysisResult(
+      aircraftType: json['aircraft_type'] ?? '',
+      frequency: (json['frequency'] ?? 0).toDouble(),
+      loadFactor: (json['load_factor'] ?? 0).toDouble(),
+      dailyProfit: (json['daily_profit'] ?? 0).toDouble(),
+      roiScore: (json['roi_score'] ?? 0).toDouble(),
+      valid: json['valid'] ?? false,
+    );
+  }
+}
 
   Future<void> _loadState() async {
     setState(() {

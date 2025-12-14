@@ -1253,438 +1253,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     );
   }
 
-class RouteAnalysisResult {
-  final String aircraftType;
-  final double frequency;
-  final double loadFactor;
-  final double dailyProfit;
-  final double roiScore;
-  final bool valid;
 
-  RouteAnalysisResult({
-    required this.aircraftType,
-    required this.frequency,
-    required this.loadFactor,
-    required this.dailyProfit,
-    required this.roiScore,
-    required this.valid,
-  });
-
-  factory RouteAnalysisResult.fromJson(Map<String, dynamic> json) {
-    return RouteAnalysisResult(
-      aircraftType: json['aircraft_type'] ?? '',
-      frequency: (json['frequency'] ?? 0).toDouble(),
-      loadFactor: (json['load_factor'] ?? 0).toDouble(),
-      dailyProfit: (json['daily_profit'] ?? 0).toDouble(),
-      roiScore: (json['roi_score'] ?? 0).toDouble(),
-      valid: json['valid'] ?? false,
-    );
-  }
-}
-
-  Future<void> _loadState() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final resp = await http.get(Uri.parse('http://localhost:4000/state'));
-      if (resp.statusCode == 200) {
-        final data = json.decode(resp.body) as Map<String, dynamic>;
-        setState(() {
-          _cash = (data['cash'] ?? 0).toDouble();
-          _tick = data['tick'] ?? 0;
-          _running = data['is_running'] ?? false;
-          _simSpeed = data['speed'] ?? 1;
-          final routes = (data['routes'] as List<dynamic>? ?? []);
-          _routes = routes
-              .map((e) => RouteInfo.fromJson(e as Map<String, dynamic>))
-              .toList();
-          final fleet = (data['fleet'] as List<dynamic>? ?? []);
-          _fleet = fleet
-              .map((e) => OwnedCraft.fromJson(e as Map<String, dynamic>))
-              .toList();
-        });
-      } else {
-        setState(() {
-          _error = 'State load failed (${resp.statusCode})';
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _error = 'State load failed: $e';
-      });
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
-  Future<void> _createRoute() async {
-    if (_fromCtrl.text.isEmpty || _toCtrl.text.isEmpty) {
-      setState(() => _error = 'Enter both airport codes');
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final body = json.encode({
-        'from': _fromCtrl.text.trim(),
-        'to': _toCtrl.text.trim(),
-        'via': _viaCtrl.text.trim(),
-        'aircraft_id': _aircraftId,
-        'frequency_per_day': _freqPerDay,
-        'one_way': _oneWay,
-        'user_price': _currentTicketPrice,
-      });
-      final resp = await http.post(
-        Uri.parse('http://localhost:4000/routes'),
-        headers: {'Content-Type': 'application/json'},
-        body: body,
-      );
-      if (resp.statusCode == 200) {
-        await _loadState();
-      } else {
-        final msg = resp.body.isNotEmpty ? resp.body : 'Create failed';
-        setState(() => _error = '$msg (${resp.statusCode})');
-      }
-    } catch (e) {
-      setState(() => _error = 'Create failed: $e');
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
-  Future<void> _tickOnce() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final resp = await http.post(Uri.parse('http://localhost:4000/tick'));
-      if (resp.statusCode == 200) {
-        await _loadState();
-      } else {
-        setState(() => _error = 'Tick failed (${resp.statusCode})');
-      }
-    } catch (e) {
-      setState(() => _error = 'Tick failed: $e');
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
-  Future<void> _loadAirportsList() async {
-    try {
-      final resp = await http.get(
-        Uri.parse('http://localhost:4000/airports?tier=all&fields=basic'),
-      );
-      if (resp.statusCode == 200) {
-        final data = json.decode(resp.body) as List<dynamic>;
-        final list = data
-            .map((e) => Airport.fromJson(e as Map<String, dynamic>))
-            .where((a) => a.ident.isNotEmpty)
-            .toList();
-        final index = <String, Airport>{};
-        for (final a in list) {
-          index[a.ident.toUpperCase()] = a;
-        }
-        setState(() {
-          _airportList = list;
-          _airportIndex = index;
-        });
-        _updatePricingModel();
-      }
-    } catch (_) {
-      // ignore for now; fallback to manual entry
-    }
-  }
-
-  Future<void> _loadAircraftTemplates() async {
-    setState(() {
-      _loadingTemplates = true;
-      _templatesError = null;
-    });
-    try {
-      final resp = await http.get(
-        Uri.parse('http://localhost:4000/aircraft/templates'),
-      );
-      if (resp.statusCode == 200) {
-        final data = json.decode(resp.body) as List<dynamic>;
-        final list = data
-            .map((e) => AircraftTemplate.fromJson(e as Map<String, dynamic>))
-            .toList();
-        setState(() {
-          _templates = list;
-          if (list.isNotEmpty && !list.any((t) => t.id == _aircraftId)) {
-            _aircraftId = list.first.id;
-          }
-        });
-      } else {
-        setState(
-          () =>
-              _templatesError = 'Failed to load aircraft (${resp.statusCode})',
-        );
-      }
-    } catch (e) {
-      setState(() => _templatesError = 'Failed to load aircraft: $e');
-    } finally {
-      if (mounted) {
-        setState(() => _loadingTemplates = false);
-      }
-    }
-  }
-
-  Future<void> _buy(String templateId, PurchaseMode mode) async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final resp = await http.post(
-        Uri.parse('http://localhost:4000/fleet/purchase'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'template_id': templateId,
-          'mode': mode == PurchaseMode.lease ? 'lease' : 'buy',
-        }),
-      );
-      if (resp.statusCode == 200) {
-        await _loadState();
-      } else {
-        final msg = resp.body.isNotEmpty ? resp.body : 'Purchase failed';
-        setState(() => _error = '$msg (${resp.statusCode})');
-      }
-    } catch (e) {
-      setState(() => _error = 'Purchase failed: $e');
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
-  Future<void> _startSim(int speed) async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final resp = await http.post(
-        Uri.parse('http://localhost:4000/sim/start'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'speed': speed}),
-      );
-      if (resp.statusCode == 200) {
-        await _loadState();
-      } else {
-        setState(() => _error = 'Start failed (${resp.statusCode})');
-      }
-    } catch (e) {
-      setState(() => _error = 'Start failed: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _pauseSim() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final resp = await http.post(
-        Uri.parse('http://localhost:4000/sim/pause'),
-      );
-      if (resp.statusCode == 200) {
-        await _loadState();
-      } else {
-        setState(() => _error = 'Pause failed (${resp.statusCode})');
-      }
-    } catch (e) {
-      setState(() => _error = 'Pause failed: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _setSimSpeed(int speed) async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final resp = await http.post(
-        Uri.parse('http://localhost:4000/sim/speed'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'speed': speed}),
-      );
-      if (resp.statusCode == 200) {
-        await _loadState();
-      } else {
-        setState(() => _error = 'Speed failed (${resp.statusCode})');
-      }
-    } catch (e) {
-      setState(() => _error = 'Speed failed: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Widget _buyButton(AircraftTemplate template) => const SizedBox.shrink();
-
-  Widget _panelHeader() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            Text(
-              'Routes',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
-                fontSize: 16,
-              ),
-            ),
-          ],
-        ),
-        IconButton(
-          icon: const Icon(Icons.refresh, color: Colors.white70, size: 18),
-          onPressed: _busy ? null : _loadState,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
-        ),
-      ],
-    );
-  }
-
-  Widget _kpiRow() {
-    final leaseCost = _fleet.fold<double>(
-      0,
-      (sum, f) =>
-          f.ownershipType.toLowerCase() == 'leased' ? sum + f.monthlyCost : sum,
-    );
-    final routeProfit = _routes.fold<double>(
-      0,
-      (sum, r) => sum + r.profit.toDouble(),
-    );
-    final losingCashFlow = routeProfit - leaseCost < 0;
-    final cards = [
-      _kpiChip('Cash', '\$${_cash.toStringAsFixed(0)}', danger: losingCashFlow),
-      _kpiChip('Tick', '$_tick'),
-      if (_routes.isNotEmpty)
-        _kpiChip(
-          'Avg load',
-          '${(_routes.map((e) => e.load).fold<double>(0, (a, b) => a + b) / _routes.length * 100).toStringAsFixed(0)}%',
-        ),
-    ];
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: cards
-            .map(
-              (c) =>
-                  Padding(padding: const EdgeInsets.only(right: 6), child: c),
-            )
-            .toList(),
-      ),
-    );
-  }
-
-  Widget _kpiChip(String label, String value, {bool danger = false}) {
-    final valueColor = danger ? Colors.redAccent : Colors.white;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label.toUpperCase(),
-            style: const TextStyle(
-              color: Colors.white54,
-              fontSize: 10,
-              letterSpacing: 0.5,
-            ),
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              color: valueColor,
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _simControls() {
-    return Row(
-      children: [
-        IconButton(
-          icon: Icon(
-            _running ? Icons.pause_circle_filled : Icons.play_circle_fill,
-            color: Colors.white,
-          ),
-          onPressed: _busy
-              ? null
-              : () => _running ? _pauseSim() : _startSim(_simSpeed),
-        ),
-        Row(
-          children: List.generate(4, (i) {
-            final sp = i + 1;
-            final active = sp == _simSpeed;
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2),
-              child: GestureDetector(
-                onTap: _busy ? null : () => _setSimSpeed(sp),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: active
-                        ? Colors.teal.withOpacity(0.2)
-                        : Colors.white.withOpacity(0.06),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: active ? Colors.tealAccent : Colors.white24,
-                    ),
-                  ),
-                  child: Text(
-                    '${sp}x',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }),
-        ),
-      ],
-    );
-  }
-
-  Widget _routeForm() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2633,6 +2202,7 @@ class AircraftTemplate {
   }
 }
 
+
 class Airport {
   final String id;
   final String ident;
@@ -2673,6 +2243,35 @@ class Airport {
       city: json['city']?.toString() ?? '',
       iata: json['iata']?.toString() ?? '',
       icao: json['icao']?.toString() ?? '',
+    );
+  }
+}
+
+class RouteAnalysisResult {
+  final String aircraftType;
+  final double frequency;
+  final double loadFactor;
+  final double dailyProfit;
+  final double roiScore;
+  final bool valid;
+
+  RouteAnalysisResult({
+    required this.aircraftType,
+    required this.frequency,
+    required this.loadFactor,
+    required this.dailyProfit,
+    required this.roiScore,
+    required this.valid,
+  });
+
+  factory RouteAnalysisResult.fromJson(Map<String, dynamic> json) {
+    return RouteAnalysisResult(
+      aircraftType: json['aircraft_type'] ?? '',
+      frequency: (json['frequency'] ?? 0).toDouble(),
+      loadFactor: (json['load_factor'] ?? 0).toDouble(),
+      dailyProfit: (json['daily_profit'] ?? 0).toDouble(),
+      roiScore: (json['roi_score'] ?? 0).toDouble(),
+      valid: json['valid'] ?? false,
     );
   }
 }

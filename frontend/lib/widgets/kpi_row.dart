@@ -7,12 +7,14 @@ class KpiRow extends StatelessWidget {
   const KpiRow({
     super.key,
     required this.cash,
+    required this.lastCashDelta,
     required this.tick,
     required this.routes,
     required this.fleet,
   });
 
   final double cash;
+  final double lastCashDelta;
   final int tick;
   final List<RouteInfo> routes;
   final List<OwnedCraft> fleet;
@@ -29,9 +31,18 @@ class KpiRow extends StatelessWidget {
       (sum, r) => sum + r.profit.toDouble(),
     );
     final losingCashFlow = routeProfit - leaseCost < 0;
+    final lastTickNegative = lastCashDelta < 0;
 
     final cards = [
-      _kpiChip('Cash', '\$${cash.toStringAsFixed(0)}', danger: losingCashFlow),
+      _kpiChip(
+        'Cash',
+        '\$${cash.toStringAsFixed(0)}',
+        danger: losingCashFlow || lastTickNegative,
+        trailing: lastTickNegative
+            ? const Icon(Icons.warning_rounded,
+                color: Colors.redAccent, size: 16)
+            : null,
+      ),
       _kpiChip('Tick', '$tick'),
       if (routes.isNotEmpty)
         _kpiChip(
@@ -53,7 +64,8 @@ class KpiRow extends StatelessWidget {
     );
   }
 
-  Widget _kpiChip(String label, String value, {bool danger = false}) {
+  Widget _kpiChip(String label, String value,
+      {bool danger = false, Widget? trailing}) {
     final valueColor = danger ? Colors.redAccent : Colors.white;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -81,6 +93,10 @@ class KpiRow extends StatelessWidget {
               fontSize: 13,
             ),
           ),
+          if (trailing != null) ...[
+            const SizedBox(height: 4),
+            trailing,
+          ],
         ],
       ),
     );

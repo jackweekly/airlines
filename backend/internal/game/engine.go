@@ -263,6 +263,9 @@ func (e *Engine) LoadState(path string) error {
 	if st.DemandVariability <= 0 {
 		st.DemandVariability = 0.08
 	}
+	if st.RecentEvents == nil {
+		st.RecentEvents = []string{}
+	}
 	e.mu.Lock()
 	e.state = st
 	e.mu.Unlock()
@@ -274,6 +277,7 @@ func (e *Engine) AddRoute(route models.Route) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.state.Routes = append(e.state.Routes, route)
+	e.addEventLocked(fmt.Sprintf("Route %s-%s created", strings.ToUpper(route.From), strings.ToUpper(route.To)))
 	e.recalcUtilizationLocked()
 }
 
@@ -337,6 +341,7 @@ func (e *Engine) PurchaseAircraft(templateID, mode string) (models.OwnedCraft, e
 		State:         models.AircraftIdle,
 	}
 	e.state.Fleet = append(e.state.Fleet, newCraft)
+	e.addEventLocked(fmt.Sprintf("Ordered %s (%s)", newCraft.Name, newCraft.ID))
 	return newCraft, nil
 }
 
@@ -369,7 +374,10 @@ func (e *Engine) Maintain(ownedID string, manualTicks int) (*models.OwnedCraft, 
 	}
 	e.state.Cash -= cost
 	craft.Condition = 100
+	craft.State = models.AircraftIdle
+	craft.Status = "active"
 	e.beginMaintenanceLocked(craft, manualTicks)
+	e.addEventLocked(fmt.Sprintf("%s sent to maintenance", craft.Name))
 	return craft, nil
 }
 
@@ -777,7 +785,9 @@ func (e *Engine) AdvanceTick() {
 			leaseCost += ac.MonthlyCost
 		}
 	}
-	e.state.Cash += totalRevenue - totalCost - leaseCost
+	cashDelta := totalRevenue - totalCost - leaseCost
+	e.state.Cash += cashDelta
+	e.state.LastCashDelta = cashDelta
 
 	e.advanceFleetTimersLocked()
 	e.applyMaintenanceWearLocked()
@@ -961,6 +971,17 @@ func sameAirport(a, b string) bool {
 	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
+func (e *Engine) addEventLocked(msg string) {
+	if msg == "" {
+		return
+	}
+	e.state.RecentEvents = append(e.state.RecentEvents, msg)
+	const maxEvents = 20
+	if len(e.state.RecentEvents) > maxEvents {
+		e.state.RecentEvents = e.state.RecentEvents[len(e.state.RecentEvents)-maxEvents:]
+	}
+}
+
 func (e *Engine) planFlightLeg(ac *models.OwnedCraft, rt *models.Route, origin, dest string) (float64, *models.FlightPlan, float64, float64) {
 	originID := strings.ToUpper(strings.TrimSpace(origin))
 	destID := strings.ToUpper(strings.TrimSpace(dest))
@@ -1066,7 +1087,15 @@ func (e *Engine) advanceFleetTimersLocked() {
 			if ac.AvailableIn <= 0 {
 				ac.AvailableIn = 0
 				if ac.Status == "delivering" || ac.Status == "maintenance" {
+					if ac.Status == "delivering" {
+						e.addEventLocked(fmt.Sprintf("%s delivered", ac.Name))
+					} else {
+						e.addEventLocked(fmt.Sprintf("%s maintenance complete", ac.Name))
+					}
 					ac.Status = "active"
+					if ac.State == models.AircraftGrounded {
+						ac.State = models.AircraftIdle
+					}
 				}
 			}
 		}
@@ -1084,10 +1113,16 @@ func (e *Engine) applyMaintenanceWearLocked() {
 		if ac.Condition < 0 {
 			ac.Condition = 0
 		}
-		if ac.Condition < 50 {
+		if ac.Condition <= 0 {
+			ac.State = models.AircraftGrounded
+			ac.Status = "grounded"
+			ac.FlightPlan = nil
+			e.addEventLocked(fmt.Sprintf("%s grounded — requires maintenance", ac.Name))
+		} else if ac.Condition < 50 {
 			chance := ((50 - ac.Condition) / 50.0) * 0.25
 			if chance > 0 && e.rng.Float64() < chance {
 				e.beginMaintenanceLocked(ac, 3+e.rng.Intn(3))
+				e.addEventLocked(fmt.Sprintf("%s pulled for maintenance", ac.Name))
 			}
 		}
 	}

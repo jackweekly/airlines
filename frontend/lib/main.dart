@@ -381,6 +381,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   final ApiService _api = ApiService();
   late final html.IFrameElement _iframe;
   double _cash = 0;
+  double _lastCashDelta = 0;
   int _tick = 0;
   List<RouteInfo> _routes = const [];
   List<OwnedCraft> _fleet = const [];
@@ -750,7 +751,13 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               ),
             ),
             const SizedBox(width: 12),
-            KpiRow(cash: _cash, tick: _tick, routes: _routes, fleet: _fleet),
+            KpiRow(
+              cash: _cash,
+              lastCashDelta: _lastCashDelta,
+              tick: _tick,
+              routes: _routes,
+              fleet: _fleet,
+            ),
             const Spacer(),
             SimControls(
               running: _running,
@@ -895,6 +902,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       final snapshot = await _api.fetchState();
       setState(() {
         _cash = snapshot.cash;
+        _lastCashDelta = snapshot.lastCashDelta;
         _tick = snapshot.tick;
         _running = snapshot.isRunning;
         _simSpeed = snapshot.speed;

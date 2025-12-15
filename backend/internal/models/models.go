@@ -83,6 +83,8 @@ type GameState struct {
 	IsRunning         bool         `json:"is_running"`
 	Speed             int          `json:"speed"`
 	DemandVariability float64      `json:"demand_variability,omitempty"`
+	LastCashDelta     float64      `json:"last_cash_delta,omitempty"`
+	RecentEvents      []string     `json:"recent_events,omitempty"`
 }
 
 type AircraftState string
@@ -91,6 +93,7 @@ const (
 	AircraftIdle       AircraftState = "idle"
 	AircraftFlying     AircraftState = "flying"
 	AircraftTurnaround AircraftState = "turnaround"
+	AircraftGrounded   AircraftState = "grounded"
 )
 
 type FlightPlan struct {

@@ -11,19 +11,23 @@ import '../models/route_info.dart';
 class GameSnapshot {
   GameSnapshot({
     required this.cash,
+    required this.lastCashDelta,
     required this.tick,
     required this.isRunning,
     required this.speed,
     required this.routes,
     required this.fleet,
+    required this.recentEvents,
   });
 
   final double cash;
+  final double lastCashDelta;
   final int tick;
   final bool isRunning;
   final int speed;
   final List<RouteInfo> routes;
   final List<OwnedCraft> fleet;
+  final List<String> recentEvents;
 }
 
 class ApiService {
@@ -86,11 +90,15 @@ class ApiService {
         .toList();
     return GameSnapshot(
       cash: (data['cash'] ?? 0).toDouble(),
+      lastCashDelta: (data['last_cash_delta'] ?? 0).toDouble(),
       tick: data['tick'] ?? 0,
       isRunning: data['is_running'] ?? false,
       speed: data['speed'] ?? 1,
       routes: routes,
       fleet: fleet,
+      recentEvents: (data['recent_events'] as List<dynamic>? ?? [])
+          .map((e) => e.toString())
+          .toList(),
     );
   }
 

@@ -260,6 +260,9 @@ func (e *Engine) LoadState(path string) error {
 			}
 		}
 	}
+	if st.DemandVariability <= 0 {
+		st.DemandVariability = 0.08
+	}
 	e.mu.Lock()
 	e.state = st
 	e.mu.Unlock()
@@ -830,11 +833,32 @@ func toRad(deg float64) float64 {
 }
 
 func (e *Engine) demandEstimateWithOpts(fromAp, toAp models.Airport, ac models.Aircraft, freq int, opts demandOptions) int {
+	airportWeight := func(t string) float64 {
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "large_airport":
+			return 1.6
+		case "medium_airport":
+			return 1.25
+		case "small_airport":
+			return 0.85
+		default:
+			return 0.95
+		}
+	}
+
+	variability := e.state.DemandVariability
+	if variability <= 0 {
+		variability = 0.08
+	}
+
 	dist := haversine(fromAp.Latitude, fromAp.Longitude, toAp.Latitude, toAp.Longitude)
 	base := 60 + int(dist/45)
 	if base < 35 {
 		base = 35
 	}
+	// Airports with more traffic generate more base demand.
+	hubWeight := (airportWeight(fromAp.Type) + airportWeight(toAp.Type)) / 2
+	base = int(float64(base) * hubWeight)
 	if base > ac.Seats*3 {
 		base = ac.Seats * 3
 	}
@@ -856,9 +880,20 @@ func (e *Engine) demandEstimateWithOpts(fromAp, toAp models.Airport, ac models.A
 	}
 	freqBoost := 1.0 + (float64(freq-1) * 0.08)
 	d := int(float64(base) * priceElasticity * freqBoost)
+	// Small regional equipment feels less attractive on long hauls.
+	if dist > 2500 && (strings.Contains(strings.ToLower(ac.Role), "regional") || (ac.Seats > 0 && ac.Seats < 120)) {
+		longPenalty := math.Min(0.35, (dist-2500)/8000) // cap penalty so it doesn't zero out demand
+		d = int(float64(d) * (1 - longPenalty))
+	}
 	if opts.Stopover {
 		d = int(float64(d) * 0.8)
 	}
+	// Add a little noise so demand is not static tick-to-tick.
+	noise := 1 + ((e.rng.Float64()*2 - 1) * variability)
+	if noise < 0.5 {
+		noise = 0.5
+	}
+	d = int(float64(d) * noise)
 	if d < 20 {
 		d = 20
 	}

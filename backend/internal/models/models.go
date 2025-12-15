@@ -76,12 +76,13 @@ type Route struct {
 }
 
 type GameState struct {
-	Cash      float64      `json:"cash"`
-	Routes    []Route      `json:"routes"`
-	Fleet     []OwnedCraft `json:"fleet"`
-	Tick      int          `json:"tick"`
-	IsRunning bool         `json:"is_running"`
-	Speed     int          `json:"speed"`
+	Cash              float64      `json:"cash"`
+	Routes            []Route      `json:"routes"`
+	Fleet             []OwnedCraft `json:"fleet"`
+	Tick              int          `json:"tick"`
+	IsRunning         bool         `json:"is_running"`
+	Speed             int          `json:"speed"`
+	DemandVariability float64      `json:"demand_variability,omitempty"`
 }
 
 type AircraftState string

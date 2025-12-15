@@ -8,14 +8,12 @@ class KpiRow extends StatelessWidget {
     super.key,
     required this.cash,
     required this.lastCashDelta,
-    required this.tick,
     required this.routes,
     required this.fleet,
   });
 
   final double cash;
   final double lastCashDelta;
-  final int tick;
   final List<RouteInfo> routes;
   final List<OwnedCraft> fleet;
 
@@ -43,7 +41,6 @@ class KpiRow extends StatelessWidget {
                 color: Colors.redAccent, size: 16)
             : null,
       ),
-      _kpiChip('Tick', '$tick'),
       if (routes.isNotEmpty)
         _kpiChip(
           'Avg load',

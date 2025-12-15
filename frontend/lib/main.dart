@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:html' as html;
 import 'dart:math' as math;
 import 'dart:ui_web' as ui_web;
@@ -382,10 +383,11 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   late final html.IFrameElement _iframe;
   double _cash = 0;
   double _lastCashDelta = 0;
-  int _tick = 0;
   List<RouteInfo> _routes = const [];
   List<OwnedCraft> _fleet = const [];
   List<String> _events = const [];
+  Timer? _statePoller;
+  bool _refreshingState = false;
   final TextEditingController _fromCtrl = TextEditingController();
   final TextEditingController _viaCtrl = TextEditingController();
   final TextEditingController _toCtrl = TextEditingController();
@@ -763,7 +765,6 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
             KpiRow(
               cash: _cash,
               lastCashDelta: _lastCashDelta,
-              tick: _tick,
               routes: _routes,
               fleet: _fleet,
             ),
@@ -775,22 +776,6 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               onStart: _startSim,
               onPause: _pauseSim,
               onSetSpeed: _setSimSpeed,
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton(
-              onPressed: _busy ? null : _tickOnce,
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Colors.white24),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              child: const Text('Advance tick'),
             ),
             const SizedBox(width: 8),
             IconButton(
@@ -904,29 +889,36 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
 
   // ... (previous methods) ...
 
-  Future<void> _loadState() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
+  Future<void> _loadState({bool silent = false}) async {
+    if (_refreshingState) return;
+    if (!silent) {
+      setState(() {
+        _busy = true;
+        _error = null;
+      });
+    }
+    _refreshingState = true;
     try {
       final snapshot = await _api.fetchState();
       setState(() {
         _cash = snapshot.cash;
         _lastCashDelta = snapshot.lastCashDelta;
-        _tick = snapshot.tick;
         _running = snapshot.isRunning;
         _simSpeed = snapshot.speed;
         _routes = snapshot.routes;
         _fleet = snapshot.fleet;
         _events = snapshot.recentEvents.reversed.toList(growable: false);
       });
+      _syncPolling();
     } catch (e) {
-      setState(() {
-        _error = 'State load failed: $e';
-      });
+      if (!silent) {
+        setState(() {
+          _error = 'State load failed: $e';
+        });
+      }
     } finally {
-      if (mounted) {
+      _refreshingState = false;
+      if (!silent && mounted) {
         setState(() => _busy = false);
       }
     }
@@ -1029,23 +1021,6 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     }
   }
 
-  Future<void> _tickOnce() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      await _api.tick();
-      await _loadState();
-    } catch (e) {
-      setState(() => _error = 'Tick failed: $e');
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
   Future<void> _loadAirportsList() async {
     try {
       final list = await _api.fetchAirports(basic: true);
@@ -1063,6 +1038,18 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       _updatePricingModel();
     } catch (_) {
       // ignore for now; fallback to manual entry
+    }
+  }
+
+  void _syncPolling() {
+    if (_running) {
+      _statePoller ??= Timer.periodic(const Duration(seconds: 2), (_) {
+        if (!_running) return;
+        _loadState(silent: true);
+      });
+    } else {
+      _statePoller?.cancel();
+      _statePoller = null;
     }
   }
 
@@ -1649,21 +1636,6 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
             label: const Text('Analyze economics'),
           ),
         ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: OutlinedButton(
-            onPressed: _busy ? null : _tickOnce,
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Colors.white24),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: const Text('Advance tick'),
-          ),
-        ),
       ],
     );
   }
@@ -2004,5 +1976,11 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
         ],
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _statePoller?.cancel();
+    super.dispose();
   }
 }

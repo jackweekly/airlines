@@ -385,6 +385,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   int _tick = 0;
   List<RouteInfo> _routes = const [];
   List<OwnedCraft> _fleet = const [];
+  List<String> _events = const [];
   final TextEditingController _fromCtrl = TextEditingController();
   final TextEditingController _viaCtrl = TextEditingController();
   final TextEditingController _toCtrl = TextEditingController();
@@ -593,7 +594,15 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                 bottom: 12,
                 child: PointerInterceptor(child: _bottomBar()),
               ),
-              if (_activePanel.isNotEmpty)
+              if (_activePanel == 'events')
+                Positioned(
+                  left: 12,
+                  bottom: 76,
+                  child: PointerInterceptor(
+                    child: _eventsPanel(),
+                  ),
+                )
+              else if (_activePanel.isNotEmpty)
                 Positioned(
                   left: 12,
                   bottom: 76,
@@ -805,6 +814,8 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
             _bottomChip('Routes', Icons.add, 'routes'),
             const SizedBox(width: 8),
             _bottomChip('Fleet', Icons.flight_takeoff, 'fleet'),
+            const SizedBox(width: 8),
+            _bottomChip('Events', Icons.notifications, 'events'),
           ],
         ),
       ),
@@ -908,6 +919,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
         _simSpeed = snapshot.speed;
         _routes = snapshot.routes;
         _fleet = snapshot.fleet;
+        _events = snapshot.recentEvents.reversed.toList(growable: false);
       });
     } catch (e) {
       setState(() {
@@ -918,6 +930,71 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
         setState(() => _busy = false);
       }
     }
+  }
+
+  Widget _eventsPanel() {
+    final items = _events.take(12).toList();
+    return SizedBox(
+      width: 360,
+      child: Material(
+        color: Colors.black.withOpacity(0.82),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.notifications, color: Colors.white70),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Recent events',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    icon: const Icon(Icons.close, size: 16, color: Colors.white70),
+                    onPressed: () => setState(() => _activePanel = ''),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (items.isEmpty)
+                const Text(
+                  'No events yet.',
+                  style: TextStyle(color: Colors.white70),
+                )
+              else
+                ...items.map(
+                  (e) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('• ', style: TextStyle(color: Colors.white70)),
+                        Expanded(
+                          child: Text(
+                            e,
+                            style: const TextStyle(color: Colors.white),
+                            softWrap: true,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _createRoute() async {

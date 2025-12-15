@@ -558,11 +558,17 @@
           const y = A * Math.cos(lat1) * Math.sin(lon1) + B * Math.cos(lat2) * Math.sin(lon2);
           const z = A * Math.sin(lat1) + B * Math.sin(lat2);
           const lat = Math.atan2(z, Math.sqrt(x * x + y * y));
-          const lon = Math.atan2(y, x);
-          // Normalize longitudes back into [-180, 180] so Mapbox globe renders a single clean arc
-          const lonDeg = toDeg(lon);
-          const wrappedLon = ((lonDeg + 540) % 360) - 180;
-          coords.push([wrappedLon, toDeg(lat)]);
+          let lon = Math.atan2(y, x);
+
+          // Ensure continuity to allow coordinates to exceed +/- 180 for Mapbox globe
+          // This prevents routes from wrapping the "long way" when crossing the antimeridian
+          if (coords.length > 0) {
+            const prevLonRad = toRad(coords[coords.length - 1][0]);
+            while (lon - prevLonRad > Math.PI) lon -= 2 * Math.PI;
+            while (lon - prevLonRad < -Math.PI) lon += 2 * Math.PI;
+          }
+
+          coords.push([toDeg(lon), toDeg(lat)]);
         }
         return coords;
       }

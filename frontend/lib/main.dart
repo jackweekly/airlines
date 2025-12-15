@@ -933,6 +933,9 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       );
       await _loadState();
     } catch (e) {
+      // log for debugging potential timeouts
+      // ignore: avoid_print
+      print('Error: $e');
       setState(() => _error = 'Create failed: $e');
     } finally {
       if (mounted) {
@@ -1774,65 +1777,67 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   void _openCatalogDialog() {
     showDialog(
       context: context,
-      builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.black87,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 500, maxWidth: 480),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
+      builder: (dialogContext) {
+        return PointerInterceptor(
+          child: Dialog(
+            backgroundColor: Colors.black87,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 500, maxWidth: 480),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    decoration: const BoxDecoration(
+                      border: Border(bottom: BorderSide(color: Colors.white12)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Aircraft catalog',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white70),
+                          onPressed: () => Navigator.of(dialogContext).pop(),
+                        ),
+                      ],
+                    ),
                   ),
-                  decoration: const BoxDecoration(
-                    border: Border(bottom: BorderSide(color: Colors.white12)),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Aircraft catalog',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
+                  if (_templates.isEmpty)
+                    Expanded(
+                      child: Center(
+                        child: Text(
+                          _templatesError ??
+                              (_loadingTemplates
+                                  ? 'Loading…'
+                                  : 'No aircraft available'),
+                          style: const TextStyle(color: Colors.white70),
                         ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white70),
-                        onPressed: () => Navigator.of(context).pop(),
-                      ),
-                    ],
-                  ),
-                ),
-                if (_templates.isEmpty)
-                  Expanded(
-                    child: Center(
-                      child: Text(
-                        _templatesError ??
-                            (_loadingTemplates
-                                ? 'Loading…'
-                                : 'No aircraft available'),
-                        style: const TextStyle(color: Colors.white70),
+                    )
+                  else
+                    Expanded(
+                      child: ListView.builder(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: _templates.length,
+                        itemBuilder: (context, index) =>
+                            _catalogCard(_templates[index], dialogContext),
                       ),
                     ),
-                  )
-                else
-                  Expanded(
-                    child: ListView.builder(
-                      padding: const EdgeInsets.all(12),
-                      itemCount: _templates.length,
-                      itemBuilder: (context, index) =>
-                          _catalogCard(_templates[index]),
-                    ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -1840,7 +1845,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     );
   }
 
-  Widget _catalogCard(AircraftTemplate tpl) {
+  Widget _catalogCard(AircraftTemplate tpl, BuildContext dialogContext) {
     final price = _prices[tpl.id]?.toDouble();
     final range = '${tpl.rangeKm.toStringAsFixed(0)} km';
     final cruise = '${tpl.cruiseKmh.toStringAsFixed(0)} km/h';
@@ -1883,7 +1888,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                   onPressed: _busy
                       ? null
                       : () {
-                          Navigator.of(context).pop();
+                          Navigator.of(dialogContext).pop();
                           _buy(tpl.id, PurchaseMode.buy);
                         },
                   style: ElevatedButton.styleFrom(
@@ -1899,7 +1904,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                   onPressed: _busy
                       ? null
                       : () {
-                          Navigator.of(context).pop();
+                          Navigator.of(dialogContext).pop();
                           _buy(tpl.id, PurchaseMode.lease);
                         },
                   style: OutlinedButton.styleFrom(

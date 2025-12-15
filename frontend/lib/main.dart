@@ -833,7 +833,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   List<RouteAnalysisResult> _analysisResults = [];
   bool _analyzing = false;
 
-  Future<void> _analyzeRoute() async {
+  Future<void> _runAnalysis() async {
     if (_fromCtrl.text.isEmpty || _toCtrl.text.isEmpty) {
       setState(() => _error = 'Enter From/To airports');
       return;
@@ -1644,7 +1644,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
         const SizedBox(width: 10),
         Expanded(
           child: OutlinedButton.icon(
-            onPressed: _busy ? null : _showAnalysisSheet,
+            onPressed: _busy ? null : _runAnalysis,
             style: OutlinedButton.styleFrom(
               side: const BorderSide(color: Colors.white24),
               foregroundColor: Colors.white,
@@ -2009,155 +2009,6 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
           ),
         ],
       ),
-    );
-  }
-
-  void _showAnalysisSheet() {
-    final scenarios = [
-      {
-        'name': 'Current (${_aircraftId.toUpperCase()})',
-        'flightTime': '7h 20m',
-        'demand': '140 pax',
-        'profit': '\$120k/day',
-      },
-      {
-        'name': 'Larger (A321neo)',
-        'flightTime': '7h 05m',
-        'demand': '165 pax',
-        'profit': '\$148k/day',
-      },
-      {
-        'name': 'Smaller (E190)',
-        'flightTime': '7h 45m',
-        'demand': '110 pax',
-        'profit': '\$82k/day',
-      },
-    ];
-
-    final rootNav = Navigator.of(context, rootNavigator: true);
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: 'Route Analysis',
-      barrierColor: Colors.black54,
-      pageBuilder: (_, __, ___) {
-        return Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Material(
-              color: Colors.black87,
-              borderRadius: BorderRadius.circular(12),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Route Analysis',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close, color: Colors.white70),
-                          onPressed: () => rootNav.pop(),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: DataTable(
-                        headingRowColor: MaterialStateProperty.all(
-                          Colors.white10,
-                        ),
-                        columns: const [
-                          DataColumn(
-                            label: Text(
-                              'Aircraft',
-                              style: TextStyle(color: Colors.white70),
-                            ),
-                          ),
-                          DataColumn(
-                            label: Text(
-                              'Flight Time',
-                              style: TextStyle(color: Colors.white70),
-                            ),
-                          ),
-                          DataColumn(
-                            label: Text(
-                              'Est. Demand',
-                              style: TextStyle(color: Colors.white70),
-                            ),
-                          ),
-                          DataColumn(
-                            label: Text(
-                              'Est. Profit/Day',
-                              style: TextStyle(color: Colors.white70),
-                            ),
-                          ),
-                        ],
-                        rows: scenarios
-                            .map(
-                              (s) => DataRow(
-                                cells: [
-                                  DataCell(
-                                    Text(
-                                      s['name'] as String,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ),
-                                  DataCell(
-                                    Text(
-                                      s['flightTime'] as String,
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                      ),
-                                    ),
-                                  ),
-                                  DataCell(
-                                    Text(
-                                      s['demand'] as String,
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                      ),
-                                    ),
-                                  ),
-                                  DataCell(
-                                    Text(
-                                      s['profit'] as String,
-                                      style: const TextStyle(
-                                        color: Colors.tealAccent,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )
-                            .toList(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'These values are mock data. Live economics will appear here when available.',
-                      style: TextStyle(color: Colors.white54, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
     );
   }
 }

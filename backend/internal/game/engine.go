@@ -472,18 +472,18 @@ func (e *Engine) BuildRoute(from, to, via, aircraftID string, freq int, userPric
 
 	fromAp, ok := e.byIdent[fromID]
 	if !ok {
-		return models.Route{}, http.ErrMissingFile
+		return models.Route{}, fmt.Errorf("airport not found")
 	}
 	toAp, ok := e.byIdent[toID]
 	if !ok {
-		return models.Route{}, http.ErrMissingFile
+		return models.Route{}, fmt.Errorf("airport not found")
 	}
 	var viaAp models.Airport
 	var hasVia bool
 	if viaID != "" {
 		v, ok := e.byIdent[viaID]
 		if !ok {
-			return models.Route{}, http.ErrMissingFile
+			return models.Route{}, fmt.Errorf("airport not found")
 		}
 		viaAp = v
 		hasVia = true
@@ -500,7 +500,7 @@ func (e *Engine) BuildRoute(from, to, via, aircraftID string, freq int, userPric
 
 	distMain := haversine(fromAp.Latitude, fromAp.Longitude, toAp.Latitude, toAp.Longitude)
 	if distMain > ac.RangeKm {
-		return models.Route{}, http.ErrBodyNotAllowed
+		return models.Route{}, fmt.Errorf("route exceeds aircraft range of %.0f km", ac.RangeKm)
 	}
 	if fromAp.RunwayM < reqRunway || toAp.RunwayM < reqRunway {
 		return models.Route{}, fmt.Errorf("runway too short for %s", ac.ID)
@@ -511,7 +511,7 @@ func (e *Engine) BuildRoute(from, to, via, aircraftID string, freq int, userPric
 		distVia1 = haversine(fromAp.Latitude, fromAp.Longitude, viaAp.Latitude, viaAp.Longitude)
 		distVia2 = haversine(viaAp.Latitude, viaAp.Longitude, toAp.Latitude, toAp.Longitude)
 		if distVia1 > ac.RangeKm || distVia2 > ac.RangeKm {
-			return models.Route{}, http.ErrBodyNotAllowed
+			return models.Route{}, fmt.Errorf("route exceeds aircraft range of %.0f km", ac.RangeKm)
 		}
 		if viaAp.RunwayM < reqRunway {
 			return models.Route{}, fmt.Errorf("%s runway too short for %s", viaAp.Ident, ac.ID)
@@ -812,7 +812,7 @@ func (e *Engine) findAircraft(id string) (models.Aircraft, error) {
 			return a, nil
 		}
 	}
-	return models.Aircraft{}, http.ErrMissingFile
+	return models.Aircraft{}, fmt.Errorf("aircraft type not found")
 }
 
 func min(a, b int) int {

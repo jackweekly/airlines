@@ -85,7 +85,7 @@ func (s *Server) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 		UserPrice  float64 `json:"user_price"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "bad request")
 		return
 	}
 
@@ -95,15 +95,15 @@ func (s *Server) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 		if err == http.ErrBodyNotAllowed {
 			msg = "route not feasible (range/runway/legs)"
 		}
-		http.Error(w, msg, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, msg)
 		return
 	}
 	if !req.OneWay && s.engine.MarketExists(route.From, route.To) {
-		http.Error(w, "market already served in either direction", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "market already served in either direction")
 		return
 	}
 	if err := s.engine.ValidateCapacity(route); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	s.engine.AddRoute(route)
@@ -139,7 +139,7 @@ func (s *Server) handleSimSpeed(w http.ResponseWriter, r *http.Request) {
 		Speed int `json:"speed"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Speed <= 0 {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "bad request")
 		return
 	}
 	s.engine.SetSpeed(req.Speed)
@@ -153,12 +153,12 @@ func (s *Server) handlePurchase(w http.ResponseWriter, r *http.Request) {
 		Mode       string `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TemplateID == "" {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "bad request")
 		return
 	}
 	craft, err := s.engine.PurchaseAircraft(req.TemplateID, req.Mode)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -170,12 +170,12 @@ func (s *Server) handleMaintenance(w http.ResponseWriter, r *http.Request) {
 		OwnedID string `json:"owned_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OwnedID == "" {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "bad request")
 		return
 	}
 	craft, err := s.engine.Maintain(req.OwnedID, 3)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -202,14 +202,14 @@ type RouteAnalysisResult struct {
 func (s *Server) handleRouteAnalysis(w http.ResponseWriter, r *http.Request) {
 	var req RouteAnalysisRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	fromAp, ok1 := s.engine.AirportByIdent(req.Origin)
 	toAp, ok2 := s.engine.AirportByIdent(req.Dest)
 	if !ok1 || !ok2 {
-		http.Error(w, `{"error":"invalid airports"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid airports")
 		return
 	}
 
@@ -218,14 +218,14 @@ func (s *Server) handleRouteAnalysis(w http.ResponseWriter, r *http.Request) {
 	if hasVia {
 		viaAp, ok1 = s.engine.AirportByIdent(req.Via)
 		if !ok1 {
-			http.Error(w, `{"error":"invalid via airport"}`, http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "invalid via airport")
 			return
 		}
 	}
 
 	distDirect := haversine(fromAp.Latitude, fromAp.Longitude, toAp.Latitude, toAp.Longitude)
 	if distDirect <= 0 {
-		http.Error(w, `{"error":"origin and destination must differ"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "origin and destination must differ")
 		return
 	}
 
@@ -350,6 +350,15 @@ func (s *Server) handleRouteAnalysis(w http.ResponseWriter, r *http.Request) {
 }
 
 // ===== helpers =====
+
+func writeJSONError(w http.ResponseWriter, status int, msg string) {
+	if msg == "" {
+		msg = http.StatusText(status)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
 
 func filterAirports(all []models.Airport, tier string) []models.Airport {
 	if tier == "" || tier == "all" {

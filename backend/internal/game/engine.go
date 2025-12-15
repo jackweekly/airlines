@@ -862,7 +862,8 @@ func (e *Engine) demandEstimateWithOpts(fromAp, toAp models.Airport, ac models.A
 	if base > ac.Seats*3 {
 		base = ac.Seats * 3
 	}
-	basePrice := 0.13 * dist
+	// Higher base fare makes cash flow easier to notice in UI.
+	basePrice := 0.16 * dist
 	price := basePrice
 	if opts.Price > 0 {
 		price = opts.Price
@@ -986,7 +987,7 @@ func (e *Engine) planFlightLeg(ac *models.OwnedCraft, rt *models.Route, origin, 
 		price = rt.PricePerSeat
 	}
 	if price <= 0 {
-		price = 150
+		price = math.Max(220, 0.18*dist)
 	}
 	demand := e.demandEstimateWithOpts(fromAp, toAp, e.aircraftFromOwned(ac), rt.FrequencyPerDay, demandOptions{Price: price})
 	if demand < 0 {
@@ -995,7 +996,8 @@ func (e *Engine) planFlightLeg(ac *models.OwnedCraft, rt *models.Route, origin, 
 	sold := min(demand, ac.Seats)
 	revenue := float64(sold) * price
 	fees := fromAp.LandingFee + toAp.LandingFee
-	cost := dist*ac.FuelCost + 800 + fees
+	// Nudge fuel/ops costs up a bit so net cash swings are visible but balanced.
+	cost := dist*ac.FuelCost*1.05 + 900 + fees
 	duration := (dist / ac.CruiseKmh) * 60.0
 	if duration < 1 {
 		duration = 1

@@ -34,6 +34,20 @@ class ApiService {
   final http.Client _client;
 
   Uri _url(String path) => Uri.parse('$baseUrl$path');
+  String _errorMessage(http.Response resp, String fallback) {
+    try {
+      final decoded = json.decode(resp.body);
+      if (decoded is Map<String, dynamic> && decoded['error'] is String) {
+        return decoded['error'] as String;
+      }
+    } catch (_) {
+      // ignore parse errors and use fallback
+    }
+    if (resp.body.isNotEmpty) {
+      return resp.body;
+    }
+    return fallback;
+  }
 
   Future<List<Airport>> fetchAirports({bool basic = false}) async {
     final query = basic ? '?tier=all&fields=basic' : '';
@@ -110,9 +124,7 @@ class ApiService {
       }),
     );
     if (resp.statusCode != 200) {
-      throw Exception(
-        resp.body.isNotEmpty ? resp.body : 'Create failed (${resp.statusCode})',
-      );
+      throw Exception(_errorMessage(resp, 'Create failed (${resp.statusCode})'));
     }
     return RouteInfo.fromJson(json.decode(resp.body) as Map<String, dynamic>);
   }
@@ -154,9 +166,7 @@ class ApiService {
     );
     if (resp.statusCode != 200) {
       throw Exception(
-        resp.body.isNotEmpty
-            ? resp.body
-            : 'Purchase failed (${resp.statusCode})',
+        _errorMessage(resp, 'Purchase failed (${resp.statusCode})'),
       );
     }
     return OwnedCraft.fromJson(json.decode(resp.body) as Map<String, dynamic>);

@@ -5,7 +5,7 @@ install:
 	cd frontend && flutter pub get
 
 run-backend:
-	cd backend && PORT=4000 go run .
+	cd backend && PORT=4000 go run ./cmd/server
 
 run-frontend:
 	cd frontend && flutter run -d chrome --web-hostname=0.0.0.0 --web-port=8080 --release
@@ -13,7 +13,7 @@ run-frontend:
 run:
 	@set -e; \
 	trap 'kill $${BACK_PID} 2>/dev/null' EXIT INT TERM; \
-	(cd backend && PORT=4000 go run .) & \
+	(cd backend && PORT=4000 go run ./cmd/server) & \
 	BACK_PID=$$!; \
 	echo "backend started (pid=$${BACK_PID})"; \
 	(cd frontend && flutter run -d chrome --web-hostname=0.0.0.0 --web-port=8080 --release); \

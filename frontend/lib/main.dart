@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:html' as html;
 import 'dart:math' as math;
 import 'dart:ui_web' as ui_web;
@@ -8,9 +7,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_marker_cluster/flutter_map_marker_cluster.dart';
-import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
+
+import 'models/airport.dart';
+import 'models/aircraft_template.dart';
+import 'models/owned_craft.dart';
+import 'models/route_analysis_result.dart';
+import 'models/route_info.dart';
+import 'services/api_service.dart';
+import 'widgets/floating_panel.dart';
+import 'widgets/kpi_row.dart';
+import 'widgets/sim_controls.dart';
 
 const _mapboxToken =
     'pk.eyJ1IjoiamFja3dlZWtseSIsImEiOiJjbWc0amtmaG8wd2NpMmpwdXF0a2E4c3JjIn0.BXoED0qe_UmZVeWKWHe_6Q';
@@ -58,6 +66,7 @@ class _GlobeScreenState extends State<GlobeScreen> {
   bool _loadingAirports = false;
   String? _airportsError;
   bool _showSettings = false;
+  final ApiService _api = ApiService();
 
   @override
   void initState() {
@@ -308,20 +317,10 @@ class _GlobeScreenState extends State<GlobeScreen> {
       _airportsError = null;
     });
     try {
-      final resp = await http.get(Uri.parse('http://localhost:4000/airports'));
-      if (resp.statusCode == 200) {
-        final List<dynamic> data = json.decode(resp.body);
-        final parsed = data
-            .map((e) => Airport.fromJson(e as Map<String, dynamic>))
-            .toList();
-        setState(() {
-          _airports = parsed;
-        });
-      } else {
-        setState(() {
-          _airportsError = 'Failed to load airports (${resp.statusCode})';
-        });
-      }
+      final parsed = await _api.fetchAirports();
+      setState(() {
+        _airports = parsed;
+      });
     } catch (e) {
       setState(() {
         _airportsError = 'Failed to load airports: $e';
@@ -378,6 +377,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   bool _mapReady = false;
   bool _showSettings = false;
   late String _currentStyle;
+  final ApiService _api = ApiService();
   late final html.IFrameElement _iframe;
   double _cash = 0;
   int _tick = 0;
@@ -594,9 +594,43 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               if (_activePanel.isNotEmpty)
                 Positioned(
                   left: 12,
-                  right: 12,
                   bottom: 76,
-                  child: PointerInterceptor(child: _floatingPanel()),
+                  child: PointerInterceptor(
+                    child: SizedBox(
+                      width: 480,
+                      child: FloatingPanel(
+                        isRoutes: _activePanel == 'routes',
+                        showAnalysis: _showAnalysis,
+                        onClose: () => setState(() {
+                          _activePanel = '';
+                          _showAnalysis = false;
+                        }),
+                        onBackFromAnalysis: () =>
+                            setState(() => _showAnalysis = false),
+                        routeForm: _routeForm(),
+                        ctaRow: _ctaRow(),
+                        errorMessage: _error == null
+                            ? null
+                            : Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  _error!,
+                                  style: const TextStyle(
+                                    color: Colors.redAccent,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                        analysisTable: _buildAnalysisTable(),
+                        routes: _routes,
+                        fleet: _fleet,
+                        templates: _templates,
+                        onOpenCatalog: _openCatalogDialog,
+                        routeTileBuilder: _routeTile,
+                        fleetTileBuilder: _fleetTile,
+                      ),
+                    ),
+                  ),
                 ),
             ],
           ),
@@ -715,9 +749,16 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               ),
             ),
             const SizedBox(width: 12),
-            _kpiRow(),
+            KpiRow(cash: _cash, tick: _tick, routes: _routes, fleet: _fleet),
             const Spacer(),
-            _simControls(),
+            SimControls(
+              running: _running,
+              busy: _busy,
+              speed: _simSpeed,
+              onStart: _startSim,
+              onPause: _pauseSim,
+              onSetSpeed: _setSimSpeed,
+            ),
             const SizedBox(width: 8),
             OutlinedButton(
               onPressed: _busy ? null : _tickOnce,
@@ -792,134 +833,6 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   List<RouteAnalysisResult> _analysisResults = [];
   bool _analyzing = false;
 
-  Widget _floatingPanel() {
-    final isRoutes = _activePanel == 'routes';
-    // Use full height for analysis view too
-    final height = MediaQuery.of(context).size.height * 0.6;
-    final width = 450.0;
-    
-    return Align(
-      alignment: Alignment.bottomLeft,
-      child: Material(
-        color: Colors.black.withOpacity(0.85),
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          height: height,
-          width: width,
-          padding: const EdgeInsets.all(10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                   Row(
-                    children: [
-                      if (_showAnalysis)
-                        IconButton(
-                          icon: const Icon(Icons.arrow_back, color: Colors.white),
-                          onPressed: () => setState(() => _showAnalysis = false),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                        ),
-                      if (_showAnalysis) const SizedBox(width: 8),
-                      Text(
-                        _showAnalysis
-                            ? 'Strategy Analyzer'
-                            : (isRoutes ? 'Routes' : 'My Fleet'),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 20,
-                        ),
-                      ),
-                    ],
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white70),
-                    onPressed: () => setState(() { 
-                      _activePanel = '';
-                      _showAnalysis = false;
-                    }),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              if (isRoutes) ...[
-                if (_showAnalysis)
-                   Expanded(child: _buildAnalysisTable())
-                else ...[
-                  _routeForm(),
-                  const SizedBox(height: 8),
-                  _ctaRow(),
-                  if (_error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        _error!,
-                        style: const TextStyle(
-                          color: Colors.redAccent,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  const SizedBox(height: 12),
-                  _sectionTitle('Active routes'),
-                  const SizedBox(height: 4),
-                  Expanded(
-                    child: _routes.isEmpty
-                        ? const Center(
-                            child: Text(
-                              'No routes yet',
-                              style: TextStyle(color: Colors.white54),
-                            ),
-                          )
-                        : ListView.builder(
-                            itemCount: _routes.length,
-                            itemBuilder: (context, i) => _routeTile(_routes[i]),
-                          ),
-                  ),
-                ],
-              ] else ...[
-                const SizedBox(height: 4),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: _templates.isEmpty ? null : _openCatalogDialog,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.tealAccent,
-                      foregroundColor: Colors.black,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Purchase aircraft'),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: _fleet.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'No aircraft',
-                            style: TextStyle(color: Colors.white54),
-                          ),
-                        )
-                      : ListView.builder(
-                          itemCount: _fleet.length,
-                          itemBuilder: (context, i) => _fleetTile(_fleet[i]),
-                        ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Future<void> _analyzeRoute() async {
     if (_fromCtrl.text.isEmpty || _toCtrl.text.isEmpty) {
       setState(() => _error = 'Enter From/To airports');
@@ -931,31 +844,19 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     });
 
     try {
-      final body = json.encode({
-        'origin': _fromCtrl.text.trim(),
-        'dest': _toCtrl.text.trim(),
-        'via': _viaCtrl.text.trim(),
-        'aircraft_types': _templates.map((t) => t.id).toList(),
-      });
-      final resp = await http.post(
-        Uri.parse('http://localhost:4000/analysis/route'),
-        headers: {'Content-Type': 'application/json'},
-        body: body,
+      final results = await _api.analyzeRoute(
+        from: _fromCtrl.text.trim(),
+        to: _toCtrl.text.trim(),
+        via: _viaCtrl.text.trim(),
+        aircraftTypes: _templates.map((t) => t.id).toList(),
       );
-      if (resp.statusCode == 200) {
-        final data = json.decode(resp.body) as List<dynamic>;
-        setState(() {
-          _analysisResults = data
-              .map((e) => RouteAnalysisResult.fromJson(e))
-              .where((r) => r.valid)
-              .toList();
-          // Sort by ROI descending 
-          _analysisResults.sort((a, b) => b.roiScore.compareTo(a.roiScore));
-          _showAnalysis = true;
-        });
-      } else {
-         setState(() => _error = 'Analysis failed (${resp.statusCode})');
-      }
+      setState(() {
+        _analysisResults = results
+            .where((r) => r.valid)
+            .toList(growable: false);
+        _analysisResults.sort((a, b) => b.roiScore.compareTo(a.roiScore));
+        _showAnalysis = true;
+      });
     } catch (e) {
       setState(() => _error = 'Analysis error: $e');
     } finally {
@@ -968,9 +869,14 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_analysisResults.isEmpty) {
-      return const Center(child: Text('No viable aircraft found', style: TextStyle(color: Colors.white54)));
+      return const Center(
+        child: Text(
+          'No viable aircraft found',
+          style: TextStyle(color: Colors.white54),
+        ),
+      );
     }
-    
+
     // Find highest ROI for highlighting
     final best = _analysisResults.first; // Already sorted
 
@@ -991,26 +897,81 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
               dataRowColor: MaterialStateProperty.all(Colors.transparent),
               columnSpacing: 10,
               columns: const [
-                DataColumn(label: Text('Aircraft', style: TextStyle(color: Colors.white70, fontSize: 11))),
-                DataColumn(label: Text('Freq', style: TextStyle(color: Colors.white70, fontSize: 11))),
-                DataColumn(label: Text('Load', style: TextStyle(color: Colors.white70, fontSize: 11))),
-                DataColumn(label: Text('Profit/Day', style: TextStyle(color: Colors.white70, fontSize: 11))),
+                DataColumn(
+                  label: Text(
+                    'Aircraft',
+                    style: TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
+                ),
+                DataColumn(
+                  label: Text(
+                    'Freq',
+                    style: TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
+                ),
+                DataColumn(
+                  label: Text(
+                    'Load',
+                    style: TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
+                ),
+                DataColumn(
+                  label: Text(
+                    'Profit/Day',
+                    style: TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
+                ),
               ],
               rows: _analysisResults.map((r) {
-                 final isBest = r == best && r.dailyProfit > 0;
-                 return DataRow(
-                   color: isBest ? MaterialStateProperty.all(Colors.green.withOpacity(0.2)) : null,
-                   cells: [
-                     DataCell(Text(r.aircraftType, style: const TextStyle(color: Colors.white, fontSize: 12))),
-                     DataCell(Text('${r.frequency.toInt()}/d', style: const TextStyle(color: Colors.white, fontSize: 12))),
-                     DataCell(Text('${r.loadFactor.toStringAsFixed(0)}%', style: const TextStyle(color: Colors.white, fontSize: 12))),
-                     DataCell(Text('\$${r.dailyProfit.toStringAsFixed(0)}', style: TextStyle(
-                       color: r.dailyProfit >= 0 ? Colors.tealAccent : Colors.redAccent, 
-                       fontSize: 12, 
-                       fontWeight: isBest ? FontWeight.bold : FontWeight.normal
-                     ))),
-                   ],
-                 );
+                final isBest = r == best && r.dailyProfit > 0;
+                return DataRow(
+                  color: isBest
+                      ? MaterialStateProperty.all(Colors.green.withOpacity(0.2))
+                      : null,
+                  cells: [
+                    DataCell(
+                      Text(
+                        r.aircraftType,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    DataCell(
+                      Text(
+                        '${r.frequency.toInt()}/d',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    DataCell(
+                      Text(
+                        '${r.loadFactor.toStringAsFixed(0)}%',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    DataCell(
+                      Text(
+                        '\$${r.dailyProfit.toStringAsFixed(0)}',
+                        style: TextStyle(
+                          color: r.dailyProfit >= 0
+                              ? Colors.tealAccent
+                              : Colors.redAccent,
+                          fontSize: 12,
+                          fontWeight: isBest
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                        ),
+                      ),
+                    ),
+                  ],
+                );
               }).toList(),
             ),
           ),
@@ -1020,35 +981,22 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
   }
 
   // ... (previous methods) ...
-  
+
   Future<void> _loadState() async {
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      final resp = await http.get(Uri.parse('http://localhost:4000/state'));
-      if (resp.statusCode == 200) {
-        final data = json.decode(resp.body) as Map<String, dynamic>;
-        setState(() {
-          _cash = (data['cash'] ?? 0).toDouble();
-          _tick = data['tick'] ?? 0;
-          _running = data['is_running'] ?? false;
-          _simSpeed = data['speed'] ?? 1;
-          final routes = (data['routes'] as List<dynamic>? ?? []);
-          _routes = routes
-              .map((e) => RouteInfo.fromJson(e as Map<String, dynamic>))
-              .toList();
-          final fleet = (data['fleet'] as List<dynamic>? ?? []);
-          _fleet = fleet
-              .map((e) => OwnedCraft.fromJson(e as Map<String, dynamic>))
-              .toList();
-        });
-      } else {
-        setState(() {
-          _error = 'State load failed (${resp.statusCode})';
-        });
-      }
+      final snapshot = await _api.fetchState();
+      setState(() {
+        _cash = snapshot.cash;
+        _tick = snapshot.tick;
+        _running = snapshot.isRunning;
+        _simSpeed = snapshot.speed;
+        _routes = snapshot.routes;
+        _fleet = snapshot.fleet;
+      });
     } catch (e) {
       setState(() {
         _error = 'State load failed: $e';
@@ -1070,26 +1018,16 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       _error = null;
     });
     try {
-      final body = json.encode({
-        'from': _fromCtrl.text.trim(),
-        'to': _toCtrl.text.trim(),
-        'via': _viaCtrl.text.trim(),
-        'aircraft_id': _aircraftId,
-        'frequency_per_day': _freqPerDay,
-        'one_way': _oneWay,
-        'user_price': _currentTicketPrice,
-      });
-      final resp = await http.post(
-        Uri.parse('http://localhost:4000/routes'),
-        headers: {'Content-Type': 'application/json'},
-        body: body,
+      await _api.createRoute(
+        from: _fromCtrl.text.trim(),
+        to: _toCtrl.text.trim(),
+        via: _viaCtrl.text.trim(),
+        aircraftId: _aircraftId,
+        frequency: _freqPerDay,
+        oneWay: _oneWay,
+        userPrice: _currentTicketPrice,
       );
-      if (resp.statusCode == 200) {
-        await _loadState();
-      } else {
-        final msg = resp.body.isNotEmpty ? resp.body : 'Create failed';
-        setState(() => _error = '$msg (${resp.statusCode})');
-      }
+      await _loadState();
     } catch (e) {
       setState(() => _error = 'Create failed: $e');
     } finally {
@@ -1105,12 +1043,8 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       _error = null;
     });
     try {
-      final resp = await http.post(Uri.parse('http://localhost:4000/tick'));
-      if (resp.statusCode == 200) {
-        await _loadState();
-      } else {
-        setState(() => _error = 'Tick failed (${resp.statusCode})');
-      }
+      await _api.tick();
+      await _loadState();
     } catch (e) {
       setState(() => _error = 'Tick failed: $e');
     } finally {
@@ -1122,25 +1056,19 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
 
   Future<void> _loadAirportsList() async {
     try {
-      final resp = await http.get(
-        Uri.parse('http://localhost:4000/airports?tier=all&fields=basic'),
-      );
-      if (resp.statusCode == 200) {
-        final data = json.decode(resp.body) as List<dynamic>;
-        final list = data
-            .map((e) => Airport.fromJson(e as Map<String, dynamic>))
-            .where((a) => a.ident.isNotEmpty)
-            .toList();
-        final index = <String, Airport>{};
-        for (final a in list) {
-          index[a.ident.toUpperCase()] = a;
-        }
-        setState(() {
-          _airportList = list;
-          _airportIndex = index;
-        });
-        _updatePricingModel();
+      final list = await _api.fetchAirports(basic: true);
+      final filtered = list
+          .where((a) => a.ident.isNotEmpty)
+          .toList(growable: false);
+      final index = <String, Airport>{};
+      for (final a in filtered) {
+        index[a.ident.toUpperCase()] = a;
       }
+      setState(() {
+        _airportList = filtered;
+        _airportIndex = index;
+      });
+      _updatePricingModel();
     } catch (_) {
       // ignore for now; fallback to manual entry
     }
@@ -1152,26 +1080,13 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       _templatesError = null;
     });
     try {
-      final resp = await http.get(
-        Uri.parse('http://localhost:4000/aircraft/templates'),
-      );
-      if (resp.statusCode == 200) {
-        final data = json.decode(resp.body) as List<dynamic>;
-        final list = data
-            .map((e) => AircraftTemplate.fromJson(e as Map<String, dynamic>))
-            .toList();
-        setState(() {
-          _templates = list;
-          if (list.isNotEmpty && !list.any((t) => t.id == _aircraftId)) {
-            _aircraftId = list.first.id;
-          }
-        });
-      } else {
-        setState(
-          () =>
-              _templatesError = 'Failed to load aircraft (${resp.statusCode})',
-        );
-      }
+      final list = await _api.fetchAircraftTemplates();
+      setState(() {
+        _templates = list;
+        if (list.isNotEmpty && !list.any((t) => t.id == _aircraftId)) {
+          _aircraftId = list.first.id;
+        }
+      });
     } catch (e) {
       setState(() => _templatesError = 'Failed to load aircraft: $e');
     } finally {
@@ -1187,20 +1102,11 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       _error = null;
     });
     try {
-      final resp = await http.post(
-        Uri.parse('http://localhost:4000/fleet/purchase'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'template_id': templateId,
-          'mode': mode == PurchaseMode.lease ? 'lease' : 'buy',
-        }),
+      await _api.purchase(
+        templateId,
+        mode == PurchaseMode.lease ? 'lease' : 'buy',
       );
-      if (resp.statusCode == 200) {
-        await _loadState();
-      } else {
-        final msg = resp.body.isNotEmpty ? resp.body : 'Purchase failed';
-        setState(() => _error = '$msg (${resp.statusCode})');
-      }
+      await _loadState();
     } catch (e) {
       setState(() => _error = 'Purchase failed: $e');
     } finally {
@@ -1216,16 +1122,8 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       _error = null;
     });
     try {
-      final resp = await http.post(
-        Uri.parse('http://localhost:4000/sim/start'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'speed': speed}),
-      );
-      if (resp.statusCode == 200) {
-        await _loadState();
-      } else {
-        setState(() => _error = 'Start failed (${resp.statusCode})');
-      }
+      await _api.startSim(speed);
+      await _loadState();
     } catch (e) {
       setState(() => _error = 'Start failed: $e');
     } finally {
@@ -1239,14 +1137,8 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       _error = null;
     });
     try {
-      final resp = await http.post(
-        Uri.parse('http://localhost:4000/sim/pause'),
-      );
-      if (resp.statusCode == 200) {
-        await _loadState();
-      } else {
-        setState(() => _error = 'Pause failed (${resp.statusCode})');
-      }
+      await _api.pauseSim();
+      await _loadState();
     } catch (e) {
       setState(() => _error = 'Pause failed: $e');
     } finally {
@@ -1260,16 +1152,8 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       _error = null;
     });
     try {
-      final resp = await http.post(
-        Uri.parse('http://localhost:4000/sim/speed'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'speed': speed}),
-      );
-      if (resp.statusCode == 200) {
-        await _loadState();
-      } else {
-        setState(() => _error = 'Speed failed (${resp.statusCode})');
-      }
+      await _api.setSpeed(speed);
+      await _loadState();
     } catch (e) {
       setState(() => _error = 'Speed failed: $e');
     } finally {
@@ -1301,123 +1185,6 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
           onPressed: _busy ? null : _loadState,
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(),
-        ),
-      ],
-    );
-  }
-
-  Widget _kpiRow() {
-    final leaseCost = _fleet.fold<double>(
-      0,
-      (sum, f) =>
-          f.ownershipType.toLowerCase() == 'leased' ? sum + f.monthlyCost : sum,
-    );
-    final routeProfit = _routes.fold<double>(
-      0,
-      (sum, r) => sum + r.profit.toDouble(),
-    );
-    final losingCashFlow = routeProfit - leaseCost < 0;
-    final cards = [
-      _kpiChip('Cash', '\$${_cash.toStringAsFixed(0)}', danger: losingCashFlow),
-      _kpiChip('Tick', '$_tick'),
-      if (_routes.isNotEmpty)
-        _kpiChip(
-          'Avg load',
-          '${(_routes.map((e) => e.load).fold<double>(0, (a, b) => a + b) / _routes.length * 100).toStringAsFixed(0)}%',
-        ),
-    ];
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: cards
-            .map(
-              (c) =>
-                  Padding(padding: const EdgeInsets.only(right: 6), child: c),
-            )
-            .toList(),
-      ),
-    );
-  }
-
-  Widget _kpiChip(String label, String value, {bool danger = false}) {
-    final valueColor = danger ? Colors.redAccent : Colors.white;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label.toUpperCase(),
-            style: const TextStyle(
-              color: Colors.white54,
-              fontSize: 10,
-              letterSpacing: 0.5,
-            ),
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              color: valueColor,
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _simControls() {
-    return Row(
-      children: [
-        IconButton(
-          icon: Icon(
-            _running ? Icons.pause_circle_filled : Icons.play_circle_fill,
-            color: Colors.white,
-          ),
-          onPressed: _busy
-              ? null
-              : () => _running ? _pauseSim() : _startSim(_simSpeed),
-        ),
-        Row(
-          children: List.generate(4, (i) {
-            final sp = i + 1;
-            final active = sp == _simSpeed;
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2),
-              child: GestureDetector(
-                onTap: _busy ? null : () => _setSimSpeed(sp),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: active
-                        ? Colors.teal.withOpacity(0.2)
-                        : Colors.white.withOpacity(0.06),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: active ? Colors.tealAccent : Colors.white24,
-                    ),
-                  ),
-                  child: Text(
-                    '${sp}x',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }),
         ),
       ],
     );
@@ -1876,6 +1643,22 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
         ),
         const SizedBox(width: 10),
         Expanded(
+          child: OutlinedButton.icon(
+            onPressed: _busy ? null : _showAnalysisSheet,
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: Colors.white24),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            icon: const Icon(Icons.bar_chart),
+            label: const Text('Analyze economics'),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
           child: OutlinedButton(
             onPressed: _busy ? null : _tickOnce,
             style: OutlinedButton.styleFrom(
@@ -1893,16 +1676,6 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     );
   }
 
-  Widget _sectionTitle(String title) {
-    return Text(
-      title,
-      style: const TextStyle(
-        color: Colors.white70,
-        fontWeight: FontWeight.w700,
-      ),
-    );
-  }
-
   Widget _routeTile(RouteInfo r) {
     final profitPos = r.profit >= 0;
     final routeLabel = r.via.isNotEmpty
@@ -1914,7 +1687,9 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     return Card(
       elevation: 3,
       margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-      color: Colors.white.withOpacity(0.04), // Keeping some transparency if desired, or use default Surface color
+      color: Colors.white.withOpacity(
+        0.04,
+      ), // Keeping some transparency if desired, or use default Surface color
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -1937,7 +1712,10 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                 ),
                 const SizedBox(width: 6),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: profitPos
                         ? Colors.teal.withOpacity(0.2)
@@ -1957,12 +1735,20 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
             const SizedBox(height: 8),
             Text(
               'Freq ${r.freq}/d • Block ${r.blockMins.toStringAsFixed(0)}m • Last Load ${(loadForDisplay * 100).clamp(0, 999).toStringAsFixed(0)}% • Fare \$${displayPrice.toStringAsFixed(0)} • Fees \$${r.landingFees.toStringAsFixed(0)}/leg',
-              style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 13,
+                height: 1.4,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
               'Last Rev \$${revForDisplay.toStringAsFixed(0)} • Cost \$${r.cost.toStringAsFixed(0)} • Profit \$${r.profit.toStringAsFixed(0)}${r.curfewBlocked ? ' • Curfew blocked' : ''}',
-              style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 13,
+                height: 1.4,
+              ),
             ),
           ],
         ),
@@ -2010,7 +1796,9 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
                   style: TextStyle(
                     color: isMaintenance ? Colors.redAccent : Colors.white70,
                     fontSize: 11,
-                    fontWeight: isMaintenance ? FontWeight.w600 : FontWeight.w400,
+                    fontWeight: isMaintenance
+                        ? FontWeight.w600
+                        : FontWeight.w400,
                   ),
                 ),
               ],
@@ -2223,224 +2011,153 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       ),
     );
   }
-}
 
-class RouteInfo {
-  RouteInfo({
-    required this.id,
-    required this.from,
-    required this.to,
-    required this.via,
-    required this.aircraftId,
-    required this.freq,
-    required this.price,
-    required this.userPrice,
-    required this.rev,
-    required this.cost,
-    required this.load,
-    required this.lastRev,
-    required this.lastLoad,
-    required this.profit,
-    required this.blockMins,
-    required this.landingFees,
-    required this.curfewBlocked,
-  });
+  void _showAnalysisSheet() {
+    final scenarios = [
+      {
+        'name': 'Current (${_aircraftId.toUpperCase()})',
+        'flightTime': '7h 20m',
+        'demand': '140 pax',
+        'profit': '\$120k/day',
+      },
+      {
+        'name': 'Larger (A321neo)',
+        'flightTime': '7h 05m',
+        'demand': '165 pax',
+        'profit': '\$148k/day',
+      },
+      {
+        'name': 'Smaller (E190)',
+        'flightTime': '7h 45m',
+        'demand': '110 pax',
+        'profit': '\$82k/day',
+      },
+    ];
 
-  final String id;
-  final String from;
-  final String to;
-  final String via;
-  final String aircraftId;
-  final int freq;
-  final double price;
-  final double userPrice;
-  final double rev;
-  final double cost;
-  final double load;
-  final double lastRev;
-  final double lastLoad;
-  final double profit;
-  final double blockMins;
-  final double landingFees;
-  final bool curfewBlocked;
-
-  factory RouteInfo.fromJson(Map<String, dynamic> json) {
-    return RouteInfo(
-      id: json['id'] ?? '',
-      from: json['from'] ?? '',
-      to: json['to'] ?? '',
-      via: json['via']?.toString() ?? '',
-      aircraftId: json['aircraft_id'] ?? '',
-      freq: json['frequency_per_day'] ?? 0,
-      price: (json['price_per_seat'] ?? 0).toDouble(),
-      userPrice: (json['user_price'] ?? 0).toDouble(),
-      rev: (json['estimated_revenue_tick'] ?? 0).toDouble(),
-      cost: (json['estimated_cost_tick'] ?? 0).toDouble(),
-      load: (json['load_factor'] ?? 0).toDouble(),
-      lastRev: (json['last_tick_revenue'] ?? 0).toDouble(),
-      lastLoad: (json['last_tick_load'] ?? 0).toDouble(),
-      profit: (json['profit_per_tick'] ?? 0).toDouble(),
-      blockMins: (json['block_minutes'] ?? 0).toDouble(),
-      landingFees: (json['landing_fees_per_leg'] ?? 0).toDouble(),
-      curfewBlocked: json['curfew_blocked'] ?? false,
-    );
-  }
-}
-
-class OwnedCraft {
-  OwnedCraft({
-    required this.id,
-    required this.templateId,
-    required this.name,
-    required this.rangeKm,
-    required this.seats,
-    required this.cruiseKmh,
-    required this.fuelCost,
-    required this.turnaround,
-    required this.status,
-    required this.availableIn,
-    required this.util,
-    required this.condition,
-    required this.ownershipType,
-    required this.monthlyCost,
-  });
-
-  final String id;
-  final String templateId;
-  final String name;
-  final double rangeKm;
-  final int seats;
-  final double cruiseKmh;
-  final double fuelCost;
-  final int turnaround;
-  final String status;
-  final int availableIn;
-  final double util;
-  final double condition;
-  final String ownershipType;
-  final double monthlyCost;
-
-  factory OwnedCraft.fromJson(Map<String, dynamic> json) {
-    return OwnedCraft(
-      id: json['id']?.toString() ?? '',
-      templateId: json['template_id']?.toString() ?? '',
-      name: json['name']?.toString() ?? '',
-      rangeKm: (json['range_km'] ?? 0).toDouble(),
-      seats: json['seats'] ?? 0,
-      cruiseKmh: (json['cruise_kmh'] ?? 0).toDouble(),
-      fuelCost: (json['fuel_cost_per_km'] ?? 0).toDouble(),
-      turnaround: json['turnaround_min'] ?? 0,
-      status: json['status']?.toString() ?? '',
-      availableIn: json['available_in_ticks'] ?? 0,
-      util: (json['utilization_pct'] ?? 0).toDouble(),
-      condition: (json['condition_pct'] ?? 0).toDouble(),
-      ownershipType: json['ownership_type']?.toString() ?? 'owned',
-      monthlyCost: (json['monthly_cost'] ?? 0).toDouble(),
-    );
-  }
-}
-
-class AircraftTemplate {
-  AircraftTemplate({
-    required this.id,
-    required this.name,
-    required this.rangeKm,
-    required this.seats,
-    required this.cruiseKmh,
-    required this.fuelCostPerKm,
-    required this.turnaroundMin,
-  });
-
-  final String id;
-  final String name;
-  final double rangeKm;
-  final int seats;
-  final double cruiseKmh;
-  final double fuelCostPerKm;
-  final int turnaroundMin;
-
-  factory AircraftTemplate.fromJson(Map<String, dynamic> json) {
-    return AircraftTemplate(
-      id: json['id']?.toString() ?? '',
-      name: json['name']?.toString() ?? '',
-      rangeKm: (json['range_km'] ?? 0).toDouble(),
-      seats: json['seats'] ?? 0,
-      cruiseKmh: (json['cruise_kmh'] ?? 0).toDouble(),
-      fuelCostPerKm: (json['fuel_cost_per_km'] ?? 0).toDouble(),
-      turnaroundMin: json['turnaround_min'] ?? 0,
-    );
-  }
-}
-
-class Airport {
-  final String id;
-  final String ident;
-  final String type;
-  final String name;
-  final double lat;
-  final double lon;
-  final String country;
-  final String region;
-  final String city;
-  final String iata;
-  final String icao;
-
-  Airport({
-    required this.id,
-    required this.ident,
-    required this.type,
-    required this.name,
-    required this.lat,
-    required this.lon,
-    required this.country,
-    required this.region,
-    required this.city,
-    required this.iata,
-    required this.icao,
-  });
-
-  factory Airport.fromJson(Map<String, dynamic> json) {
-    return Airport(
-      id: json['id']?.toString() ?? '',
-      ident: json['ident']?.toString() ?? '',
-      type: json['type']?.toString() ?? '',
-      name: json['name']?.toString() ?? '',
-      lat: (json['lat'] as num?)?.toDouble() ?? 0.0,
-      lon: (json['lon'] as num?)?.toDouble() ?? 0.0,
-      country: json['country']?.toString() ?? '',
-      region: json['region']?.toString() ?? '',
-      city: json['city']?.toString() ?? '',
-      iata: json['iata']?.toString() ?? '',
-      icao: json['icao']?.toString() ?? '',
-    );
-  }
-}
-
-class RouteAnalysisResult {
-  final String aircraftType;
-  final double frequency;
-  final double loadFactor;
-  final double dailyProfit;
-  final double roiScore;
-  final bool valid;
-
-  RouteAnalysisResult({
-    required this.aircraftType,
-    required this.frequency,
-    required this.loadFactor,
-    required this.dailyProfit,
-    required this.roiScore,
-    required this.valid,
-  });
-
-  factory RouteAnalysisResult.fromJson(Map<String, dynamic> json) {
-    return RouteAnalysisResult(
-      aircraftType: json['aircraft_type'] ?? '',
-      frequency: (json['frequency'] ?? 0).toDouble(),
-      loadFactor: (json['load_factor'] ?? 0).toDouble(),
-      dailyProfit: (json['daily_profit'] ?? 0).toDouble(),
-      roiScore: (json['roi_score'] ?? 0).toDouble(),
-      valid: json['valid'] ?? false,
+    final rootNav = Navigator.of(context, rootNavigator: true);
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Route Analysis',
+      barrierColor: Colors.black54,
+      pageBuilder: (_, __, ___) {
+        return Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Material(
+              color: Colors.black87,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Route Analysis',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white70),
+                          onPressed: () => rootNav.pop(),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        headingRowColor: MaterialStateProperty.all(
+                          Colors.white10,
+                        ),
+                        columns: const [
+                          DataColumn(
+                            label: Text(
+                              'Aircraft',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                          ),
+                          DataColumn(
+                            label: Text(
+                              'Flight Time',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                          ),
+                          DataColumn(
+                            label: Text(
+                              'Est. Demand',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                          ),
+                          DataColumn(
+                            label: Text(
+                              'Est. Profit/Day',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                          ),
+                        ],
+                        rows: scenarios
+                            .map(
+                              (s) => DataRow(
+                                cells: [
+                                  DataCell(
+                                    Text(
+                                      s['name'] as String,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                  DataCell(
+                                    Text(
+                                      s['flightTime'] as String,
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                      ),
+                                    ),
+                                  ),
+                                  DataCell(
+                                    Text(
+                                      s['demand'] as String,
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                      ),
+                                    ),
+                                  ),
+                                  DataCell(
+                                    Text(
+                                      s['profit'] as String,
+                                      style: const TextStyle(
+                                        color: Colors.tealAccent,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'These values are mock data. Live economics will appear here when available.',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

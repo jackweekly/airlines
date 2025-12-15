@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 
 	"airline_builder/internal/game"
@@ -204,7 +205,7 @@ func (s *Server) handleRouteAnalysis(w http.ResponseWriter, r *http.Request) {
 	fromAp, ok1 := s.engine.AirportByIdent(req.Origin)
 	toAp, ok2 := s.engine.AirportByIdent(req.Dest)
 	if !ok1 || !ok2 {
-		http.Error(w, "Invalid airports", http.StatusBadRequest)
+		http.Error(w, `{"error":"invalid airports"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -213,12 +214,16 @@ func (s *Server) handleRouteAnalysis(w http.ResponseWriter, r *http.Request) {
 	if hasVia {
 		viaAp, ok1 = s.engine.AirportByIdent(req.Via)
 		if !ok1 {
-			http.Error(w, "Invalid via airport", http.StatusBadRequest)
+			http.Error(w, `{"error":"invalid via airport"}`, http.StatusBadRequest)
 			return
 		}
 	}
 
 	distDirect := haversine(fromAp.Latitude, fromAp.Longitude, toAp.Latitude, toAp.Longitude)
+	if distDirect <= 0 {
+		http.Error(w, `{"error":"origin and destination must differ"}`, http.StatusBadRequest)
+		return
+	}
 
 	distLeg1 := distDirect
 	distLeg2 := 0.0
@@ -311,7 +316,10 @@ func (s *Server) handleRouteAnalysis(w http.ResponseWriter, r *http.Request) {
 			costToBuy = 50_000_000
 		}
 
-		roi := (dailyProfit * 365) / costToBuy * 100
+		roi := 0.0
+		if costToBuy > 0 && math.IsInf(dailyProfit, 0) == false {
+			roi = (dailyProfit * 365) / costToBuy * 100
+		}
 
 		results = append(results, RouteAnalysisResult{
 			AircraftType: ac.ID,
@@ -321,6 +329,16 @@ func (s *Server) handleRouteAnalysis(w http.ResponseWriter, r *http.Request) {
 			RoiScore:     roi,
 			Valid:        true,
 		})
+	}
+
+	// limit to top 5 by profit
+	if len(results) > 1 {
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].DailyProfit > results[j].DailyProfit
+		})
+		if len(results) > 5 {
+			results = results[:5]
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

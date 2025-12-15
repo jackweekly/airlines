@@ -8,7 +8,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
-	"net/http"
+
 	"os"
 	"path/filepath"
 	"strconv"

@@ -1263,7 +1263,7 @@ func (e *Engine) ValidateCapacity(route models.Route) error {
 		}
 	}
 	if activeCount == 0 {
-		return http.ErrBodyNotAllowed // no available aircraft of that type
+		return fmt.Errorf("no active %s aircraft available in fleet", route.AircraftID)
 	}
 
 	totalMins := route.BlockMinutes * float64(route.FrequencyPerDay)

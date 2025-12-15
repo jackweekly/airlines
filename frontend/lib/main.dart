@@ -16,6 +16,7 @@ import 'models/owned_craft.dart';
 import 'models/route_analysis_result.dart';
 import 'models/route_info.dart';
 import 'services/api_service.dart';
+import 'widgets/analysis_table.dart';
 import 'widgets/floating_panel.dart';
 import 'widgets/kpi_row.dart';
 import 'widgets/sim_controls.dart';
@@ -868,115 +869,18 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
     if (_analyzing) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (_analysisResults.isEmpty) {
-      return const Center(
-        child: Text(
-          'No viable aircraft found',
-          style: TextStyle(color: Colors.white54),
-        ),
-      );
-    }
-
-    // Find highest ROI for highlighting
-    final best = _analysisResults.first; // Already sorted
-
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8.0),
-          child: Text(
-            'Comparing ${_fromCtrl.text} to ${_toCtrl.text}${_viaCtrl.text.isNotEmpty ? " via ${_viaCtrl.text}" : ""}',
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
-          ),
-        ),
-        Expanded(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.vertical,
-            child: DataTable(
-              headingRowColor: MaterialStateProperty.all(Colors.white10),
-              dataRowColor: MaterialStateProperty.all(Colors.transparent),
-              columnSpacing: 10,
-              columns: const [
-                DataColumn(
-                  label: Text(
-                    'Aircraft',
-                    style: TextStyle(color: Colors.white70, fontSize: 11),
-                  ),
-                ),
-                DataColumn(
-                  label: Text(
-                    'Freq',
-                    style: TextStyle(color: Colors.white70, fontSize: 11),
-                  ),
-                ),
-                DataColumn(
-                  label: Text(
-                    'Load',
-                    style: TextStyle(color: Colors.white70, fontSize: 11),
-                  ),
-                ),
-                DataColumn(
-                  label: Text(
-                    'Profit/Day',
-                    style: TextStyle(color: Colors.white70, fontSize: 11),
-                  ),
-                ),
-              ],
-              rows: _analysisResults.map((r) {
-                final isBest = r == best && r.dailyProfit > 0;
-                return DataRow(
-                  color: isBest
-                      ? MaterialStateProperty.all(Colors.green.withOpacity(0.2))
-                      : null,
-                  cells: [
-                    DataCell(
-                      Text(
-                        r.aircraftType,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                    DataCell(
-                      Text(
-                        '${r.frequency.toInt()}/d',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                    DataCell(
-                      Text(
-                        '${r.loadFactor.toStringAsFixed(0)}%',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                    DataCell(
-                      Text(
-                        '\$${r.dailyProfit.toStringAsFixed(0)}',
-                        style: TextStyle(
-                          color: r.dailyProfit >= 0
-                              ? Colors.tealAccent
-                              : Colors.redAccent,
-                          fontSize: 12,
-                          fontWeight: isBest
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              }).toList(),
-            ),
-          ),
-        ),
-      ],
+    return AnalysisTable(
+      results: _analysisResults,
+      onSelect: (result) {
+        final freq = result.frequency.isFinite
+            ? result.frequency.round().clamp(1, 24)
+            : 1;
+        setState(() {
+          _aircraftId = result.aircraftType;
+          _freqPerDay = freq;
+          _showAnalysis = false;
+        });
+      },
     );
   }
 

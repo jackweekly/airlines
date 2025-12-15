@@ -500,7 +500,7 @@ func (e *Engine) BuildRoute(from, to, via, aircraftID string, freq int, userPric
 
 	distMain := haversine(fromAp.Latitude, fromAp.Longitude, toAp.Latitude, toAp.Longitude)
 	if distMain > ac.RangeKm {
-		return models.Route{}, fmt.Errorf("route exceeds aircraft range of %.0f km", ac.RangeKm)
+		return models.Route{}, fmt.Errorf("route distance exceeds aircraft range of %.0f km", ac.RangeKm)
 	}
 	if fromAp.RunwayM < reqRunway || toAp.RunwayM < reqRunway {
 		return models.Route{}, fmt.Errorf("runway too short for %s", ac.ID)
@@ -511,7 +511,7 @@ func (e *Engine) BuildRoute(from, to, via, aircraftID string, freq int, userPric
 		distVia1 = haversine(fromAp.Latitude, fromAp.Longitude, viaAp.Latitude, viaAp.Longitude)
 		distVia2 = haversine(viaAp.Latitude, viaAp.Longitude, toAp.Latitude, toAp.Longitude)
 		if distVia1 > ac.RangeKm || distVia2 > ac.RangeKm {
-			return models.Route{}, fmt.Errorf("route exceeds aircraft range of %.0f km", ac.RangeKm)
+			return models.Route{}, fmt.Errorf("route distance exceeds aircraft range of %.0f km", ac.RangeKm)
 		}
 		if viaAp.RunwayM < reqRunway {
 			return models.Route{}, fmt.Errorf("%s runway too short for %s", viaAp.Ident, ac.ID)

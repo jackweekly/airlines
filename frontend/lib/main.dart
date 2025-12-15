@@ -518,6 +518,12 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
           });
           _notifySelection();
         }
+      } else if (data is Map && data['type'] == 'map_ready') {
+        if (mounted) {
+          setState(() => _mapReady = true);
+        } else {
+          _mapReady = true;
+        }
       }
     });
   }

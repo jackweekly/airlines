@@ -118,6 +118,11 @@
 
       // Fetch airports from backend and render as clustered circles
       map.on('load', () => {
+        try {
+          window.parent?.postMessage({ type: 'map_ready' }, '*');
+        } catch (e) {
+          console.error('failed to notify parent', e);
+        }
         fetch(`${backend}/airports`)
           .then(resp => resp.json())
           .then(data => {

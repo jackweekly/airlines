@@ -541,8 +541,10 @@
         const [lon2, lat2] = to.map(toRad);
         const d = 2 * Math.asin(Math.sqrt(Math.sin((lat2 - lat1) / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2));
         if (d === 0) return [from, to];
+        // distance in km for adaptive resolution
+        const km = d * 6371;
+        const n = steps || Math.min(256, Math.max(32, Math.round(km / 250) * 4));
         const coords = [];
-        const n = steps || 64;
         for (let i = 0; i <= n; i++) {
           const f = i / n;
           const A = Math.sin((1 - f) * d) / Math.sin(d);

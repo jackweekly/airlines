@@ -684,9 +684,12 @@ func (e *Engine) AdvanceTick() {
 	totalRevenue := 0.0
 	totalCost := 0.0
 
-	findRouteForAc := func(acID string) *models.Route {
+	findRouteForAc := func(acID string, tplID string) *models.Route {
 		for i := range e.state.Routes {
-			if e.state.Routes[i].AircraftID == acID {
+			if strings.EqualFold(e.state.Routes[i].AircraftID, acID) {
+				return &e.state.Routes[i]
+			}
+			if strings.EqualFold(e.state.Routes[i].AircraftID, tplID) {
 				return &e.state.Routes[i]
 			}
 		}
@@ -712,8 +715,9 @@ func (e *Engine) AdvanceTick() {
 				if ac.FlightPlan != nil {
 					ac.Location = strings.ToUpper(ac.FlightPlan.Dest)
 				}
+				// enforce a full turnaround before next leg
 				ac.State = models.AircraftTurnaround
-				ac.TimerMin = ac.TurnaroundMin
+				ac.TimerMin = maxInt(1, ac.TurnaroundMin)
 				ac.FlightPlan = nil
 			}
 		case models.AircraftTurnaround, models.AircraftIdle:
@@ -725,7 +729,7 @@ func (e *Engine) AdvanceTick() {
 			if ac.TimerMin > 0 {
 				continue
 			}
-			rt := findRouteForAc(ac.TemplateID)
+			rt := findRouteForAc(ac.ID, ac.TemplateID)
 			if rt == nil {
 				ac.State = models.AircraftIdle
 				continue

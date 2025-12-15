@@ -29,32 +29,58 @@ class AnalysisTable extends StatelessWidget {
     return SingleChildScrollView(
       scrollDirection: Axis.vertical,
       child: DataTable(
-        headingRowColor: WidgetStateProperty.all(Colors.white10),
+        headingRowColor: WidgetStateProperty.all(Colors.black12),
         dataRowColor: WidgetStateProperty.all(Colors.transparent),
         columnSpacing: 12,
         columns: const [
           DataColumn(
             label: Text(
-              'Aircraft',
-              style: TextStyle(color: Colors.white70, fontSize: 12),
+              'Plane',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
           DataColumn(
             label: Text(
               'Freq',
-              style: TextStyle(color: Colors.white70, fontSize: 12),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          DataColumn(
+            label: Text(
+              'Load',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
           DataColumn(
             label: Text(
               'Profit',
-              style: TextStyle(color: Colors.white70, fontSize: 12),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
           DataColumn(
             label: Text(
               'ROI',
-              style: TextStyle(color: Colors.white70, fontSize: 12),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
           DataColumn(label: Text('')),
@@ -71,7 +97,13 @@ class AnalysisTable extends StatelessWidget {
                   ),
                   DataCell(
                     Text(
-                      '${r.frequency.toInt()}x',
+                      '${r.frequency.toInt()}/day',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  ),
+                  DataCell(
+                    Text(
+                      '${r.loadFactor.toStringAsFixed(0)}%',
                       style: const TextStyle(color: Colors.white70),
                     ),
                   ),

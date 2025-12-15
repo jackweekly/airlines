@@ -91,7 +91,11 @@ func (s *Server) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 
 	route, err := s.engine.BuildRoute(req.From, req.To, req.Via, req.AircraftID, req.Frequency, req.UserPrice)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		msg := err.Error()
+		if err == http.ErrBodyNotAllowed {
+			msg = "route not feasible (range/runway/legs)"
+		}
+		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
 	if !req.OneWay && s.engine.MarketExists(route.From, route.To) {

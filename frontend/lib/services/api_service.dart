@@ -40,17 +40,21 @@ class ApiService {
   Uri _url(String path) => Uri.parse('$baseUrl$path');
   String _errorMessage(http.Response resp, String fallback) {
     try {
-      final decoded = json.decode(resp.body);
-      if (decoded is Map<String, dynamic> && decoded['error'] is String) {
-        return decoded['error'] as String;
+      final body = resp.body;
+      if (body.isEmpty) return fallback;
+      try {
+        final decoded = json.decode(body);
+        if (decoded is Map<String, dynamic> && decoded['error'] is String) {
+          return decoded['error'] as String;
+        }
+      } catch (_) {
+        // ignore json parse error, return raw body
       }
+      return body;
     } catch (_) {
-      // ignore parse errors and use fallback
+      // body access failed (e.g. CORS/browser issue)
+      return fallback;
     }
-    if (resp.body.isNotEmpty) {
-      return resp.body;
-    }
-    return fallback;
   }
 
   Future<List<Airport>> fetchAirports({bool basic = false}) async {

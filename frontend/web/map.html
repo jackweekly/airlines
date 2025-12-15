@@ -538,7 +538,12 @@
 
       function greatCircle(from, to, steps) {
         const [lon1, lat1] = from.map(toRad);
-        const [lon2, lat2] = to.map(toRad);
+        let [lon2, lat2] = to.map(toRad);
+        // Adjust longitudes so we always travel the short way across the globe (handles dateline)
+        const diff = lon2 - lon1;
+        if (Math.abs(diff) > Math.PI) {
+          lon2 -= Math.sign(diff) * 2 * Math.PI;
+        }
         const d = 2 * Math.asin(Math.sqrt(Math.sin((lat2 - lat1) / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2));
         if (d === 0) return [from, to];
         // distance in km for adaptive resolution
@@ -554,7 +559,10 @@
           const z = A * Math.sin(lat1) + B * Math.sin(lat2);
           const lat = Math.atan2(z, Math.sqrt(x * x + y * y));
           const lon = Math.atan2(y, x);
-          coords.push([toDeg(lon), toDeg(lat)]);
+          // Normalize longitudes back into [-180, 180] so Mapbox globe renders a single clean arc
+          const lonDeg = toDeg(lon);
+          const wrappedLon = ((lonDeg + 540) % 360) - 180;
+          coords.push([wrappedLon, toDeg(lat)]);
         }
         return coords;
       }

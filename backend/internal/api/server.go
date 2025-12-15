@@ -103,6 +103,7 @@ func (s *Server) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.engine.AddRoute(route)
+	_ = s.engine.SaveState("")
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(route)
@@ -157,6 +158,7 @@ func (s *Server) handlePurchase(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	_ = s.engine.SaveState("")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(craft)
 }

@@ -473,7 +473,6 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
         setState(() {
           _mapReady = true;
         });
-        _loadState();
       }
     });
     // ignore: undefined_prefixed_name
@@ -482,6 +481,7 @@ class _MapboxGlobeWebState extends State<MapboxGlobeWeb> {
       (int _) => _iframe,
     );
 
+    _loadState();
     _loadAirportsList();
     _loadAircraftTemplates();
 

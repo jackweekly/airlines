@@ -873,21 +873,25 @@ func (e *Engine) nextLegForAircraft(ac *models.OwnedCraft, rt *models.Route) (st
 	if ac.RouteLegIndex < 0 {
 		ac.RouteLegIndex = 0
 	}
-	start := ac.RouteLegIndex % len(legs)
 	location := strings.ToUpper(strings.TrimSpace(ac.Location))
-	for offset := 0; offset < len(legs); offset++ {
-		idx := (start + offset) % len(legs)
-		leg := legs[idx]
-		if location == "" || sameAirport(location, leg.Origin) {
-			ac.RouteLegIndex = (idx + 1) % len(legs)
-			if location == "" {
-				ac.Location = leg.Origin
+
+	// First, try to find a leg that departs from the aircraft's current location.
+	if location != "" {
+		for idx, leg := range legs {
+			if sameAirport(location, leg.Origin) {
+				ac.RouteLegIndex = (idx + 1) % len(legs)
+				return leg.Origin, leg.Dest
 			}
-			return leg.Origin, leg.Dest
 		}
 	}
+
+	// Otherwise continue from the saved index (wrap around the legs list).
+	start := ac.RouteLegIndex % len(legs)
 	leg := legs[start]
 	ac.RouteLegIndex = (start + 1) % len(legs)
+	if location == "" {
+		ac.Location = leg.Origin
+	}
 	return leg.Origin, leg.Dest
 }
 

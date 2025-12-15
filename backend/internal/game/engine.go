@@ -252,6 +252,13 @@ func (e *Engine) LoadState(path string) error {
 		if st.Fleet[i].State == "" {
 			st.Fleet[i].State = models.AircraftIdle
 		}
+		if st.Fleet[i].TurnaroundMin == 0 {
+			if tpl, err := e.findAircraft(st.Fleet[i].TemplateID); err == nil && tpl.TurnaroundMin > 0 {
+				st.Fleet[i].TurnaroundMin = tpl.TurnaroundMin
+			} else {
+				st.Fleet[i].TurnaroundMin = 30
+			}
+		}
 	}
 	e.mu.Lock()
 	e.state = st
